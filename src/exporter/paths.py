@@ -50,10 +50,7 @@ def browser_profile_dir(project_root: Path, platform: str, shop: Shop) -> Path:
     profile_root = os.environ.get("PDD_EXPORTER_PROFILE_ROOT")
     if profile_root:
         return Path(profile_root) / platform / shop.id
-    local_app_data = os.environ.get("LOCALAPPDATA")
-    if local_app_data:
-        return Path(local_app_data) / "PddExporter" / "browser_profiles" / platform / shop.id
-    return Path.home() / ".pdd_exporter_browser_profiles" / platform / shop.id
+    return project_root / "browser_profiles" / platform / shop.id
 
 
 def ensure_output_dirs(
