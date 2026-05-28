@@ -6,4 +6,5 @@ browser_profiles/
 示例/
 build/
 dist/
+release/
 *.spec
