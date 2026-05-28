@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.venv/
+browser_profiles/
+原始数据/
+示例/
+build/
+dist/
+*.spec

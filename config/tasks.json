@@ -1,0 +1,30 @@
+{
+  "data_types": [
+    {
+      "id": "returns",
+      "name": "退货数据",
+      "enabled": true
+    },
+    {
+      "id": "negative_experience",
+      "name": "消费者负向体验扣款数据",
+      "enabled": true,
+      "max_days_per_query": 7
+    },
+    {
+      "id": "delayed_shipping",
+      "name": "延迟发货数据",
+      "enabled": true,
+      "tabs": [
+        "延迟发货",
+        "缺货",
+        "虚假发货/虚假轨迹"
+      ]
+    },
+    {
+      "id": "customer_service_performance",
+      "name": "客服绩效数据",
+      "enabled": true
+    }
+  ]
+}

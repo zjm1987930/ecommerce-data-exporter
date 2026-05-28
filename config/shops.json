@@ -1,0 +1,51 @@
+{
+  "platform": "pinduoduo",
+  "platform_name": "拼多多",
+  "shops": [
+    {
+      "id": "dayan_tushu",
+      "name": "拼多多大雁图书专营店",
+      "sheet_name": "拼多多大雁"
+    },
+    {
+      "id": "yiguan_tushu",
+      "name": "拼多多逸观图书专营店",
+      "sheet_name": "拼多多逸观"
+    },
+    {
+      "id": "jinzhe_tushuyinxiang",
+      "name": "拼多多金喆图书音像专营店",
+      "sheet_name": "拼多多金喆"
+    },
+    {
+      "id": "dayan_shuji",
+      "name": "拼多多大雁书籍专营店",
+      "sheet_name": "拼多多大雁书籍"
+    },
+    {
+      "id": "dayan_muying",
+      "name": "拼多多大雁母婴专营店",
+      "sheet_name": "拼多多大雁母婴"
+    },
+    {
+      "id": "dayan_muyingwanju",
+      "name": "拼多多大雁母婴玩具专营店",
+      "sheet_name": "拼多多大雁母婴玩具"
+    },
+    {
+      "id": "dayan_tongshu",
+      "name": "拼多多大雁童书专营店",
+      "sheet_name": "拼多多大雁童书"
+    },
+    {
+      "id": "yiguan_shuji",
+      "name": "拼多多逸观书籍专营店",
+      "sheet_name": "拼多多逸观书籍"
+    },
+    {
+      "id": "yiguan_muyingwanju",
+      "name": "拼多多逸观母婴玩具专营店",
+      "sheet_name": "拼多多逸观母婴玩具"
+    }
+  ]
+}
