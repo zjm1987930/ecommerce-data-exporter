@@ -1,5 +1,21 @@
 # 开发日志
 
+## 2026-05-28 抖音保证金数据接入
+
+- 新增抖音平台配置，13 家抖音店铺已写入 `config/shops.json`，其中“字在文化图书”已按用户纠正后的店名记录。
+- `config/tasks.json` 新增 `douyin_deposit` / `保证金数据`，平台为 `douyin`。
+- GUI 新增平台选择，下拉选择“拼多多”或“抖音”后，只显示对应平台的店铺和数据类型。
+- 抖音登录态使用共享目录 `browser_profiles/douyin/douyin_default/`，符合抖音同一账号可切换多店铺的实际规则。
+- 新增普通 Edge 登录入口 `login_douyin.ps1` / `tools/open_douyin_login.py`。
+- 新增抖音保证金接口监听工具 `debug_douyin_deposit_api.ps1` / `tools/debug_douyin_deposit_api.py`，并修复监听时多开空白页的问题。
+- 已确认抖音保证金入口：后台首页 -> 资金 -> 保证金账户 -> 体验保证金 TAB。
+- 已确认保证金交易流水筛选字段：交易时间、交易类型、交易单号；查询按钮为“查询”，导出按钮为“导出明细”。
+- 已确认接口链路：`/governance/shop/tpledgecash/flow/list` 查询数量，`/governance/shop/tpledgecash/record/download` 直接下载 CSV。
+- 已确认下载文件格式为 CSV，字段为：操作单号、操作时间、操作类型、操作金额、备注、关联订单号、交易状态。
+- 新增 `src/exporter/automation/douyin_deposit.py`，可按 GUI 选择的店铺自动切换抖音店铺并导出体验保证金 CSV。
+- 实测 `字在图书精选店`、日期 `2026-02-01` 至 `2026-02-28`：查询接口返回 54 条，下载 CSV 为 55 行（1 行表头 + 54 条数据），输出文件为 `原始数据/保证金数据/20260201-20260228/字在图书精选店/20260201-20260228抖音字在图书保证金.csv`。
+- 已验证：`.venv\Scripts\python.exe -m py_compile src\exporter\config.py src\exporter\app.py src\exporter\runner.py src\exporter\browser.py src\exporter\automation\douyin_deposit.py tools\open_douyin_login.py tools\debug_douyin_deposit_api.py` 通过；`.venv\Scripts\python.exe tools\check_project.py` 通过。
+
 ## 2026-05-28 输出目录、命名和 GUI 工具箱优化
 
 - 所有最终输出文件名改为实际选择日期范围开头：`YYYYMMDD-YYYYMMDD + 店铺短名 + 数据类型`，避免同月多次导出无法区分。
@@ -314,3 +330,17 @@
 ### 下一步建议
 
 把已经跑通的三类拼多多自动化接入 GUI/主流程，并整理一份日常运行与失败补跑说明。退货接口化暂不做，后续如需提速再单独评估抓包接入。
+
+## 2026-05-28 抖音保证金导出接入
+
+- 新增抖音平台配置和 GUI 平台选择：抖音 13 家店铺共用 `browser_profiles/douyin/douyin_default/` 登录状态。
+- 新增数据类型“保证金数据”，入口为抖店后台 `首页 -> 资金 -> 保证金账户 -> 体验保证金 TAB`。
+- 保证金查询优先走接口 `/governance/shop/tpledgecash/flow/list`，下载走 `/governance/shop/tpledgecash/record/download`，导出文件为 CSV。
+- 输出目录为 `原始数据/保证金数据/YYYYMMDD-YYYYMMDD/店铺/`，文件名为 `YYYYMMDD-YYYYMMDD + 店铺短名 + 保证金.csv`。
+- 已确认 `字在图书精选店` 在 `2026-02-01` 至 `2026-02-28` 可查询 54 条并真实下载 CSV。
+- 抖音无数据处理已接入：查询接口 `total=0` 时记为“无数据”，不下载 CSV，GUI 日志显示“无数据，已跳过下载，继续下一家”。
+- 切店调试确认：抖店会在本地存储 `fxg_login_shop_list_cache...` 中缓存 13 家店铺主体列表，包含 `account_id`、`subject_id`、`member_id`、`encode_shop_id` 等字段；纯 SSO 接口切换还需要前端生成的加密参数，暂未直接复刻。
+- 已将多店铺执行改为同一个抖音自动化浏览器连续跑选中店铺，不再每家店铺关闭重开浏览器。
+- 切店逻辑改为打开“切换组织/店铺”弹窗后直接从 DOM 定位目标店铺卡片并点击，避免依赖滚轮只向下滚动导致列表位置变化时卡住。
+- 已用 GUI runner 试运行 `伟业图书专营店`、`字在图书精选店`、`字在文化图书` 三家，日期 `2026-04-01` 至 `2026-04-30`，三家均识别为无数据并连续跳过完成。
+- 已再次真实下载 `字在图书精选店`、日期 `2026-02-01` 至 `2026-02-28`，验证批量改造后下载链路仍正常。

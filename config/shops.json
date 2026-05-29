@@ -46,6 +46,110 @@
       "id": "yiguan_muyingwanju",
       "name": "拼多多逸观母婴玩具专营店",
       "sheet_name": "拼多多逸观母婴玩具"
+    },
+    {
+      "id": "douyin_weiye_tushu",
+      "name": "伟业图书专营店",
+      "sheet_name": "抖音伟业图书",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_weiye_yanxuan",
+      "name": "伟业严选图书阁",
+      "sheet_name": "抖音伟业严选",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_dayan_chuangyi",
+      "name": "大雁图书创意屋",
+      "sheet_name": "抖音大雁创意",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_jinzhe_tushu",
+      "name": "金喆图书",
+      "sheet_name": "抖音金喆图书",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_zizai_tushu",
+      "name": "字在图书精选店",
+      "sheet_name": "抖音字在图书",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_dayan_tushu",
+      "name": "大雁图书",
+      "sheet_name": "抖音大雁图书",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_jinzhe_wenhua",
+      "name": "金喆文化图书",
+      "sheet_name": "抖音金喆文化",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_zizai_wenhua_tushu",
+      "name": "字在文化图书",
+      "sheet_name": "抖音字在文化图书",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_zizai_wenhua",
+      "name": "字在文化",
+      "sheet_name": "抖音字在文化",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_dayan_shenghuo",
+      "name": "大雁文化生活坊",
+      "sheet_name": "抖音大雁文化生活",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_yunhan_shuhai",
+      "name": "云涵书海文化",
+      "sheet_name": "抖音云涵书海",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_yuequ_wenhua",
+      "name": "悦趣文化图书",
+      "sheet_name": "抖音悦趣文化",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
+    },
+    {
+      "id": "douyin_yiguan_tushu",
+      "name": "逸观图书",
+      "sheet_name": "抖音逸观图书",
+      "platform": "douyin",
+      "platform_name": "抖音",
+      "profile_id": "douyin_default"
     }
   ]
 }

@@ -10,6 +10,7 @@ from typing import Callable
 
 from .automation.customer_service_performance import CustomerServicePerformanceAutomator
 from .automation.delayed_shipping import DELAYED_TAB_ORDER, DelayedShippingAutomator
+from .automation.douyin_deposit import DouyinDepositAutomator
 from .automation.negative_experience import NegativeExperienceAutomator
 from .automation.returns import ReturnsAutomator
 from .browser import open_shop_browser, PDD_DATA_TYPE_URLS, PDD_HOME_URL
@@ -50,7 +51,13 @@ class ExportRunner:
         )
         logger = ExportLogger(log_dir(self.project_root, selection.date_range))
         has_real_automation = any(
-            data_type.id in {"returns", "negative_experience", "delayed_shipping", "customer_service_performance"}
+            data_type.id in {
+                "returns",
+                "negative_experience",
+                "delayed_shipping",
+                "customer_service_performance",
+                "douyin_deposit",
+            }
             for data_type in selection.data_types
         )
         shops_to_open = self._shops_to_open(selection)
@@ -83,6 +90,32 @@ class ExportRunner:
             if self._data_type_by_id(selection.data_types, "customer_service_performance")
             else None
         )
+        douyin_deposit_automator = (
+            DouyinDepositAutomator(self.project_root)
+            if self._data_type_by_id(selection.data_types, "douyin_deposit")
+            else None
+        )
+
+        douyin_deposit_type = self._data_type_by_id(selection.data_types, "douyin_deposit")
+        if (
+            douyin_deposit_automator
+            and douyin_deposit_type
+            and all(data_type.id == "douyin_deposit" for data_type in selection.data_types)
+        ):
+            failures = self._run_douyin_deposit_batch(
+                douyin_deposit_automator,
+                logger,
+                douyin_deposit_type,
+                selection,
+                status_callback,
+            )
+            if failures:
+                self._status(status_callback, "全部选中任务已执行完成，但存在失败项，需要补跑：")
+                for item in failures:
+                    self._status(status_callback, item)
+            else:
+                self._status(status_callback, "全部选中任务已执行完成，没有失败项。")
+            return logger.write()
 
         failures: list[str] = []
         for shop in selection.shops:
@@ -96,6 +129,8 @@ class ExportRunner:
 
             for data_type in selection.data_types:
                 self._raise_if_cancelled(selection)
+                if data_type.platform != shop.platform:
+                    continue
                 if data_type.id == "delayed_shipping":
                     assert delayed_automator is not None
                     status, reason = self._run_delayed_shipping_shop(delayed_automator, logger, shop, data_type, selection, status_callback)
@@ -122,6 +157,16 @@ class ExportRunner:
                         selection,
                         status_callback,
                     )
+                elif data_type.id == "douyin_deposit":
+                    assert douyin_deposit_automator is not None
+                    status, reason = self._run_douyin_deposit_shop(
+                        douyin_deposit_automator,
+                        logger,
+                        shop,
+                        data_type,
+                        selection,
+                        status_callback,
+                    )
                 else:
                     self._log_skeleton_task(logger, shop, data_type, selection, status_callback)
                     status, reason = "待接入", ""
@@ -135,6 +180,60 @@ class ExportRunner:
         else:
             self._status(status_callback, "全部选中任务已执行完成，没有失败项。")
         return logger.write()
+
+    def _run_douyin_deposit_batch(
+        self,
+        automator: DouyinDepositAutomator,
+        logger: ExportLogger,
+        data_type: DataType,
+        selection: RunSelection,
+        status_callback,
+    ) -> list[str]:
+        shops = [shop for shop in selection.shops if shop.platform == data_type.platform]
+        failures: list[str] = []
+        started_at_map = {shop: datetime.now().isoformat(timespec="seconds") for shop in shops}
+        for shop in shops:
+            self._raise_if_cancelled(selection)
+            self._status(status_callback, f"{shop.name} - {data_type.name}: 等待抖音共享浏览器批量执行")
+
+        writer = _StatusWriter(status_callback)
+        with redirect_stdout(writer), redirect_stderr(writer):
+            results = automator.run_batch(
+                shops,
+                selection.date_range,
+                dry_run=selection.dry_run,
+            )
+        writer.flush()
+
+        for shop in shops:
+            self._raise_if_cancelled(selection)
+            result = results.get(shop, None)
+            status = result.status if result else "失败"
+            reason = result.message if result else "未取得执行结果"
+            file_path = str(result.downloaded_file) if result and result.downloaded_file else ""
+            logger.add(
+                ExportLogRow(
+                    month=selection.date_range.month_key,
+                    platform=shop.platform_name,
+                    shop=shop.name,
+                    data_type=data_type.name,
+                    start_date=selection.date_range.start.isoformat(),
+                    end_date=selection.date_range.end.isoformat(),
+                    status=status,
+                    file_path=file_path,
+                    reason=reason,
+                    started_at=started_at_map.get(shop, datetime.now().isoformat(timespec="seconds")),
+                    finished_at=datetime.now().isoformat(timespec="seconds"),
+                )
+            )
+            self._status(status_callback, f"{shop.name} - {data_type.name}: {status}")
+            if status == "无数据":
+                self._status(status_callback, f"{shop.name} - {data_type.name}: 无数据，已跳过下载，继续下一家")
+            if file_path:
+                self._status(status_callback, f"{shop.name} - 输出文件: {file_path}")
+            if self._is_failed_status(status):
+                failures.append(f"{shop.name} - {data_type.name}: {reason}")
+        return failures
 
     def run_skeleton(self, selection: RunSelection, status_callback=None) -> tuple[Path, Path]:
         ensure_output_dirs(
@@ -218,6 +317,8 @@ class ExportRunner:
             if result.output_file:
                 file_path = str(result.output_file)
             self._status(status_callback, f"{shop.name} - {data_type.name}: {status}")
+            if status == "无数据":
+                self._status(status_callback, f"{shop.name} - {data_type.name}: 无数据，已跳过下载，继续下一家")
             if file_path:
                 self._status(status_callback, f"{shop.name} - 输出文件: {file_path}")
         except TaskCancelled:
@@ -231,6 +332,59 @@ class ExportRunner:
                 ExportLogRow(
                     month=selection.date_range.month_key,
                     platform=self.config.platform_name,
+                    shop=shop.name,
+                    data_type=data_type.name,
+                    start_date=selection.date_range.start.isoformat(),
+                    end_date=selection.date_range.end.isoformat(),
+                    status=status,
+                    file_path=file_path,
+                    reason=reason,
+                    started_at=started_at,
+                    finished_at=datetime.now().isoformat(timespec="seconds"),
+                )
+            )
+        return status, reason
+
+    def _run_douyin_deposit_shop(
+        self,
+        automator: DouyinDepositAutomator,
+        logger: ExportLogger,
+        shop: Shop,
+        data_type: DataType,
+        selection: RunSelection,
+        status_callback,
+    ) -> tuple[str, str]:
+        started_at = datetime.now().isoformat(timespec="seconds")
+        status = "失败"
+        file_path = ""
+        reason = ""
+        self._status(status_callback, f"{shop.name} - {data_type.name}: 开始下载抖音体验保证金")
+        try:
+            writer = _StatusWriter(status_callback)
+            with redirect_stdout(writer), redirect_stderr(writer):
+                result = automator.run(
+                    shop,
+                    selection.date_range,
+                    dry_run=selection.dry_run,
+                )
+            status = result.status
+            reason = result.message
+            if result.downloaded_file:
+                file_path = str(result.downloaded_file)
+            self._status(status_callback, f"{shop.name} - {data_type.name}: {status}")
+            if file_path:
+                self._status(status_callback, f"{shop.name} - 输出文件: {file_path}")
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            reason = str(exc)
+            self._status(status_callback, f"{shop.name} - {data_type.name}: 失败")
+            self._status(status_callback, reason)
+        finally:
+            logger.add(
+                ExportLogRow(
+                    month=selection.date_range.month_key,
+                    platform=shop.platform_name,
                     shop=shop.name,
                     data_type=data_type.name,
                     start_date=selection.date_range.start.isoformat(),

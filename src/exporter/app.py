@@ -11,7 +11,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from .browser import PDD_HOME_URL, open_shop_browser
+from .browser import DOUYIN_HOME_URL, PDD_HOME_URL, open_shop_browser
 from .config import AppConfig, load_config, Shop, DataType
 from .dates import previous_month, parse_date, DateRange
 from .runner import ExportRunner, RunSelection, TaskCancelled
@@ -29,6 +29,9 @@ class ExporterApp(tk.Tk):
         self.user_action_event = threading.Event()
         self.stop_event = threading.Event()
         self.dry_run_var = tk.BooleanVar(value=False)
+        self.platform_var = tk.StringVar(value=self.config.platform)
+        self.shop_grid: ttk.Frame | None = None
+        self.type_frame: ttk.LabelFrame | None = None
 
         self.title("电商平台原始数据自动导出工具")
         self.geometry("980x720")
@@ -39,6 +42,14 @@ class ExporterApp(tk.Tk):
     def _build_ui(self) -> None:
         root = ttk.Frame(self, padding=16)
         root.pack(fill=tk.BOTH, expand=True)
+
+        platform_frame = ttk.LabelFrame(root, text="平台")
+        platform_frame.pack(fill=tk.X, pady=(0, 12))
+        platform_values = [f"{platform} | {name}" for platform, name in self._platform_options()]
+        self.platform_combo = ttk.Combobox(platform_frame, values=platform_values, width=32, state="readonly")
+        self.platform_combo.pack(side=tk.LEFT, padx=8, pady=8)
+        self.platform_combo.current(0)
+        self.platform_combo.bind("<<ComboboxSelected>>", self._platform_changed)
 
         date_range = previous_month()
         date_frame = ttk.LabelFrame(root, text="日期范围")
@@ -68,31 +79,12 @@ class ExporterApp(tk.Tk):
         ttk.Button(shop_actions, text="全选店铺", command=lambda: self._set_all(self.shop_vars, True)).pack(side=tk.LEFT)
         ttk.Button(shop_actions, text="清空店铺", command=lambda: self._set_all(self.shop_vars, False)).pack(side=tk.LEFT, padx=8)
 
-        shop_grid = ttk.Frame(shop_frame)
-        shop_grid.pack(fill=tk.X, padx=8, pady=8)
-        for index, shop in enumerate(self.config.shops):
-            var = tk.BooleanVar(value=True)
-            self.shop_vars[shop.id] = var
-            ttk.Checkbutton(shop_grid, text=shop.name, variable=var).grid(
-                row=index // 3,
-                column=index % 3,
-                sticky=tk.W,
-                padx=8,
-                pady=4,
-            )
+        self.shop_grid = ttk.Frame(shop_frame)
+        self.shop_grid.pack(fill=tk.X, padx=8, pady=8)
 
-        type_frame = ttk.LabelFrame(root, text="数据类型")
-        type_frame.pack(fill=tk.X, pady=(0, 12))
-        for index, data_type in enumerate(self.config.data_types):
-            var = tk.BooleanVar(value=True)
-            self.type_vars[data_type.id] = var
-            ttk.Checkbutton(type_frame, text=data_type.name, variable=var).grid(
-                row=0,
-                column=index,
-                sticky=tk.W,
-                padx=12,
-                pady=8,
-            )
+        self.type_frame = ttk.LabelFrame(root, text="数据类型")
+        self.type_frame.pack(fill=tk.X, pady=(0, 12))
+        self._render_platform_scope()
 
         action_frame = ttk.Frame(root)
         action_frame.pack(fill=tk.X, pady=(0, 12))
@@ -139,10 +131,62 @@ class ExporterApp(tk.Tk):
             var.set(value)
 
     def _selected_shops(self) -> list[Shop]:
-        return [shop for shop in self.config.shops if self.shop_vars[shop.id].get()]
+        platform = self._current_platform()
+        return [shop for shop in self.config.shops if shop.platform == platform and self.shop_vars[shop.id].get()]
 
     def _selected_types(self) -> list[DataType]:
-        return [item for item in self.config.data_types if self.type_vars[item.id].get()]
+        platform = self._current_platform()
+        return [item for item in self.config.data_types if item.platform == platform and self.type_vars[item.id].get()]
+
+    def _platform_options(self) -> list[tuple[str, str]]:
+        seen: dict[str, str] = {}
+        seen[self.config.platform] = self.config.platform_name
+        for shop in self.config.shops:
+            seen.setdefault(shop.platform, shop.platform_name)
+        return list(seen.items())
+
+    def _current_platform(self) -> str:
+        value = self.platform_combo.get() if hasattr(self, "platform_combo") else self.platform_var.get()
+        if "|" in value:
+            return value.split("|", 1)[0].strip()
+        return value.strip() or self.config.platform
+
+    def _platform_changed(self, _event=None) -> None:
+        self.platform_var.set(self._current_platform())
+        self._render_platform_scope()
+
+    def _render_platform_scope(self) -> None:
+        platform = self._current_platform()
+        self.shop_vars.clear()
+        self.type_vars.clear()
+        if self.shop_grid is not None:
+            for child in self.shop_grid.winfo_children():
+                child.destroy()
+            shops = [shop for shop in self.config.shops if shop.platform == platform]
+            for index, shop in enumerate(shops):
+                var = tk.BooleanVar(value=True)
+                self.shop_vars[shop.id] = var
+                ttk.Checkbutton(self.shop_grid, text=shop.name, variable=var).grid(
+                    row=index // 3,
+                    column=index % 3,
+                    sticky=tk.W,
+                    padx=8,
+                    pady=4,
+                )
+        if self.type_frame is not None:
+            for child in self.type_frame.winfo_children():
+                child.destroy()
+            data_types = [item for item in self.config.data_types if item.platform == platform]
+            for index, data_type in enumerate(data_types):
+                var = tk.BooleanVar(value=True)
+                self.type_vars[data_type.id] = var
+                ttk.Checkbutton(self.type_frame, text=data_type.name, variable=var).grid(
+                    row=0,
+                    column=index,
+                    sticky=tk.W,
+                    padx=12,
+                    pady=8,
+                )
 
     def _date_range(self) -> DateRange:
         start = parse_date(self.start_var.get())
@@ -199,18 +243,45 @@ class ExporterApp(tk.Tk):
 
     def _login_selected_worker(self, shops: list[Shop]) -> None:
         try:
-            for index, shop in enumerate(shops, start=1):
-                self.status_queue.put(f"补登录 [{index}/{len(shops)}]: 打开 {shop.name} 的普通 Edge 登录环境")
-                open_shop_browser(self.project_root, self.config.platform, shop, PDD_HOME_URL)
-                if index < len(shops):
+            targets = self._login_targets(shops)
+            for index, (display_name, platform, profile_shop, url) in enumerate(targets, start=1):
+                self.status_queue.put(f"补登录 [{index}/{len(targets)}]: 打开 {display_name} 的普通 Edge 登录环境")
+                open_shop_browser(self.project_root, platform, profile_shop, url)
+                if index < len(targets):
                     self._wait_for_user_action_from_worker(
-                        f"请在普通 Edge 中完成 {shop.name} 登录，确认进入后台后关闭该 Edge 窗口，再点击“我已完成人工操作，继续”打开下一个店铺。"
+                        f"请在普通 Edge 中完成 {display_name} 登录，确认进入后台后关闭该 Edge 窗口，再点击“我已完成人工操作，继续”打开下一个登录环境。"
                     )
             self.status_queue.put("补登录流程已完成。请确认所有普通 Edge 登录窗口均已关闭，再回 GUI 执行任务。")
         except Exception as exc:
             self.status_queue.put(f"补登录失败: {exc}")
         finally:
             self.status_queue.put("__LOGIN_DONE__")
+
+    def _login_targets(self, shops: list[Shop]) -> list[tuple[str, str, Shop, str]]:
+        targets: list[tuple[str, str, Shop, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for shop in shops:
+            if shop.platform == "douyin":
+                profile_id = shop.profile_id or "douyin_default"
+                key = (shop.platform, profile_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                profile_shop = Shop(
+                    id=profile_id,
+                    name="抖音默认账号",
+                    sheet_name="抖音默认账号",
+                    platform=shop.platform,
+                    platform_name=shop.platform_name,
+                )
+                targets.append(("抖音默认账号", shop.platform, profile_shop, DOUYIN_HOME_URL))
+            else:
+                key = (shop.platform, shop.id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                targets.append((shop.name, shop.platform, shop, PDD_HOME_URL))
+        return targets
 
     def _wait_for_user_action_from_worker(self, message: str) -> None:
         self.user_action_event.clear()
@@ -295,27 +366,38 @@ class ExporterApp(tk.Tk):
         shop = shops[0]
         start = date_range.start.isoformat()
         end = date_range.end.isoformat()
-        commands = [
-            "可复制到 PowerShell 执行。以下命令默认使用当前选中的第一个店铺和当前日期范围：",
-            "",
-            "1. 补登录当前店铺：",
-            f"powershell -ExecutionPolicy Bypass -File .\\login_shop.ps1 --shop-id {shop.id}",
-            "",
-            "2. 退货单店试运行，只查询不下载：",
-            f"powershell -ExecutionPolicy Bypass -File .\\run_returns_once.ps1 --shop-id {shop.id} --start {start} --end {end}",
-            "",
-            "3. 客服绩效单店试运行，只请求下载地址不保存文件：",
-            f"powershell -ExecutionPolicy Bypass -File .\\run_customer_service_performance_once.ps1 --shop-id {shop.id} --start {start} --end {end} --dry-run",
-            "",
-            "4. 延迟发货单店试运行，查询前三个 TAB 不下载：",
-            f"powershell -ExecutionPolicy Bypass -File .\\run_delayed_shipping_once.ps1 --shop-id {shop.id} --start {start} --end {end} --all-tabs",
-            "",
-            "5. 客服绩效接口失效时使用：打开监听窗口，手动选日期并点击下载表单，完成后把生成的 JSON 发给开发者：",
-            f"powershell -ExecutionPolicy Bypass -File .\\debug_customer_service_performance_api.ps1 --shop-id {shop.id} --start {start} --end {end} --manual-date",
-            "",
-            "6. 退货接口失效时使用：打开监听窗口，手动完成筛选、查询、批量导出、确认生成和下载，完成后把生成的 JSON 发给开发者：",
-            f"powershell -ExecutionPolicy Bypass -File .\\debug_returns_api.ps1 --shop-id {shop.id} --start {start} --end {end}",
-        ]
+        if shop.platform == "douyin":
+            commands = [
+                "可复制到 PowerShell 执行。以下命令默认使用当前选中的第一个店铺和当前日期范围：",
+                "",
+                "1. 补登录抖音共享账号：",
+                "powershell -ExecutionPolicy Bypass -File .\\login_douyin.ps1 --profile-id douyin_default --profile-name 抖音默认账号",
+                "",
+                "2. 抖音保证金接口监听：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_douyin_deposit_api.ps1 --shop-id douyin_default --shop-name {shop.name} --start {start} --end {end}",
+            ]
+        else:
+            commands = [
+                "可复制到 PowerShell 执行。以下命令默认使用当前选中的第一个店铺和当前日期范围：",
+                "",
+                "1. 补登录当前店铺：",
+                f"powershell -ExecutionPolicy Bypass -File .\\login_shop.ps1 --shop-id {shop.id}",
+                "",
+                "2. 退货单店试运行，只查询不下载：",
+                f"powershell -ExecutionPolicy Bypass -File .\\run_returns_once.ps1 --shop-id {shop.id} --start {start} --end {end}",
+                "",
+                "3. 客服绩效单店试运行，只请求下载地址不保存文件：",
+                f"powershell -ExecutionPolicy Bypass -File .\\run_customer_service_performance_once.ps1 --shop-id {shop.id} --start {start} --end {end} --dry-run",
+                "",
+                "4. 延迟发货单店试运行，查询前三个 TAB 不下载：",
+                f"powershell -ExecutionPolicy Bypass -File .\\run_delayed_shipping_once.ps1 --shop-id {shop.id} --start {start} --end {end} --all-tabs",
+                "",
+                "5. 客服绩效接口失效时使用：打开监听窗口，手动选日期并点击下载表单，完成后把生成的 JSON 发给开发者：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_customer_service_performance_api.ps1 --shop-id {shop.id} --start {start} --end {end} --manual-date",
+                "",
+                "6. 退货接口失效时使用：打开监听窗口，手动完成筛选、查询、批量导出、确认生成和下载，完成后把生成的 JSON 发给开发者：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_returns_api.ps1 --shop-id {shop.id} --start {start} --end {end}",
+            ]
         for line in commands:
             if line:
                 self._log(line)
