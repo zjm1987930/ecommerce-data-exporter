@@ -21,7 +21,7 @@ def log_dir(project_root: Path, date_range: DateRange) -> Path:
 
 
 def data_type_dir(project_root: Path, date_range: DateRange, data_type_name: str) -> Path:
-    return exports_root(project_root) / _safe_path_part(data_type_name) / date_range.range_key
+    return exports_root(project_root) / _safe_path_part(data_type_name)
 
 
 def task_shop_dir(
@@ -30,7 +30,24 @@ def task_shop_dir(
     data_type_name: str,
     shop: Shop,
 ) -> Path:
-    return data_type_dir(project_root, date_range, data_type_name) / _safe_path_part(shop.name)
+    return data_type_dir(project_root, date_range, data_type_name)
+
+
+def task_screenshot_dir(
+    project_root: Path,
+    date_range: DateRange,
+    data_type_name: str,
+    shop: Shop,
+) -> Path:
+    return data_type_dir(project_root, date_range, data_type_name) / "截图" / _safe_path_part(shop.name)
+
+
+def export_filename(shop: Shop, date_range: DateRange, data_type_name: str, suffix: str) -> str:
+    short_name = shop.sheet_name
+    platform_name = shop.platform_name
+    if short_name.startswith(platform_name):
+        short_name = short_name[len(platform_name) :]
+    return f"{date_range.range_key}{platform_name}{short_name}{data_type_name}{suffix}"
 
 
 def platform_dir(project_root: Path, date_range: DateRange, platform_name: str) -> Path:
@@ -70,9 +87,8 @@ def ensure_output_dirs(
         base_type_dir = data_type_dir(project_root, date_range, data_type_name)
         base_type_dir.mkdir(parents=True, exist_ok=True)
         for shop in shops:
-            base = task_shop_dir(project_root, date_range, data_type_name, shop)
+            base = task_screenshot_dir(project_root, date_range, data_type_name, shop)
             base.mkdir(parents=True, exist_ok=True)
-            (base / "截图").mkdir(parents=True, exist_ok=True)
 
 
 def _safe_path_part(value: str) -> str:

@@ -12,7 +12,7 @@ from exporter.automation.returns import ReturnsAutomator
 from exporter.browser import PDD_CUSTOMER_SERVICE_PERFORMANCE_URL, find_edge
 from exporter.config import Shop
 from exporter.dates import DateRange
-from exporter.paths import browser_profile_dir, task_shop_dir
+from exporter.paths import browser_profile_dir, export_filename, task_screenshot_dir, task_shop_dir
 
 
 @dataclass(frozen=True)
@@ -51,7 +51,7 @@ class CustomerServicePerformanceAutomator:
         user_data_dir.mkdir(parents=True, exist_ok=True)
         output_dir = task_shop_dir(self.project_root, date_range, "客服绩效数据", shop)
         output_dir.mkdir(parents=True, exist_ok=True)
-        screenshot_dir = output_dir / "截图"
+        screenshot_dir = task_screenshot_dir(self.project_root, date_range, "客服绩效数据", shop)
         screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         with sync_playwright() as playwright:
@@ -538,7 +538,7 @@ class CustomerServicePerformanceAutomator:
 
 
     def _filename(self, shop: Shop, date_range: DateRange) -> str:
-        return f"{date_range.range_key}{shop.sheet_name}客服绩效.xls"
+        return export_filename(shop, date_range, "客服绩效", ".xls")
 
     def _unique_download_path(self, output_dir: Path, filename: str) -> Path:
         target = output_dir / filename

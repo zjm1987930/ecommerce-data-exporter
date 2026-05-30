@@ -12,7 +12,8 @@ from playwright.sync_api import BrowserContext, Page, TimeoutError, sync_playwri
 from exporter.browser import find_edge, PDD_HOME_URL
 from exporter.config import Shop
 from exporter.dates import DateRange
-from exporter.paths import browser_profile_dir, task_shop_dir
+from exporter.automation.popups import PDD_PROTECTED_POPUP_TEXTS, dismiss_page_popups
+from exporter.paths import browser_profile_dir, export_filename, task_screenshot_dir, task_shop_dir
 
 
 @dataclass(frozen=True)
@@ -76,7 +77,7 @@ class ReturnsAutomator:
                 downloaded = self._download_generated_report_by_api(page, output_dir, shop, date_range, total)
                 return ReturnsAutomationResult("成功", f"已下载退货数据：{downloaded}", downloaded)
             except Exception:
-                screenshot_dir = output_dir / "截图"
+                screenshot_dir = task_screenshot_dir(self.project_root, date_range, "退货数据", shop)
                 screenshot_dir.mkdir(parents=True, exist_ok=True)
                 screenshot = screenshot_dir / f"退货自动化失败_{datetime.now():%Y%m%d_%H%M%S}.png"
                 try:
@@ -907,7 +908,7 @@ class ReturnsAutomator:
         raise TimeoutError("等待退货报表生成超时")
 
     def _returns_filename(self, shop: Shop, date_range: DateRange) -> str:
-        return f"{date_range.range_key}{shop.sheet_name}退货.xlsx"
+        return export_filename(shop, date_range, "退货", ".xlsx")
 
     def _unique_download_path(self, output_dir: Path, filename: str) -> Path:
         target = output_dir / filename
@@ -922,73 +923,7 @@ class ReturnsAutomator:
         return output_dir / f"{stem}_{datetime.now():%Y%m%d_%H%M%S}{suffix}"
 
     def _dismiss_page_popups(self, page: Page) -> None:
-        for _ in range(4):
-            target = page.evaluate(
-                """() => {
-                    const protectedTexts = [
-                        "批量导出报表",
-                        "近30个已生成报表",
-                        "确认生成",
-                        "生成成功",
-                        "导出"
-                    ];
-                    const visible = (el) => {
-                        const style = window.getComputedStyle(el);
-                        const rect = el.getBoundingClientRect();
-                        return style.visibility !== "hidden"
-                            && style.display !== "none"
-                            && rect.width > 0
-                            && rect.height > 0
-                            && rect.right >= 0
-                            && rect.bottom >= 0
-                            && rect.left <= window.innerWidth
-                            && rect.top <= window.innerHeight;
-                    };
-                    const hasProtectedAncestor = (el) => {
-                        let node = el;
-                        while (node && node !== document.body) {
-                            const text = (node.innerText || "").slice(0, 500);
-                            if (protectedTexts.some(item => text.includes(item))) {
-                                return true;
-                            }
-                            node = node.parentElement;
-                        }
-                        return false;
-                    };
-                    const scoreElement = (el) => {
-                        if (!visible(el) || hasProtectedAncestor(el)) return -1;
-                        const rect = el.getBoundingClientRect();
-                        const text = (el.innerText || el.textContent || "").trim();
-                        const label = (el.getAttribute("aria-label") || el.getAttribute("title") || "").trim();
-                        const className = String(el.className || "");
-                        let score = 0;
-                        if (/^(×|x|X|关闭|關閉)$/.test(text)) score += 8;
-                        if (/关闭|close/i.test(label)) score += 8;
-                        if (/close|modal-close|dialog-close/i.test(className)) score += 6;
-                        if (["BUTTON", "A", "I", "SPAN", "DIV"].includes(el.tagName)) score += 1;
-                        if (rect.width <= 80 && rect.height <= 80) score += 3;
-                        const style = window.getComputedStyle(el);
-                        const zIndex = Number.parseInt(style.zIndex || "0", 10);
-                        if (Number.isFinite(zIndex) && zIndex >= 10) score += 2;
-                        const cx = rect.left + rect.width / 2;
-                        const cy = rect.top + rect.height / 2;
-                        if (cx > window.innerWidth * 0.35 && cx < window.innerWidth * 0.8 && cy < window.innerHeight * 0.8) score += 1;
-                        return score;
-                    };
-                    const elements = Array.from(document.querySelectorAll("button,a,i,span,div,[role='button']"));
-                    const candidates = elements
-                        .map(el => ({ el, score: scoreElement(el) }))
-                        .filter(item => item.score >= 8)
-                        .sort((a, b) => b.score - a.score);
-                    if (!candidates.length) return null;
-                    const rect = candidates[0].el.getBoundingClientRect();
-                    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-                }"""
-            )
-            if not target:
-                return
-            page.mouse.click(target["x"], target["y"])
-            page.wait_for_timeout(500)
+        dismiss_page_popups(page, protected_texts=PDD_PROTECTED_POPUP_TEXTS)
 
     def _has_text(self, page: Page, text: str, timeout: int = 1000) -> bool:
         try:

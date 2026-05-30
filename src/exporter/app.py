@@ -374,7 +374,13 @@ class ExporterApp(tk.Tk):
                 "powershell -ExecutionPolicy Bypass -File .\\login_douyin.ps1 --profile-id douyin_default --profile-name 抖音默认账号",
                 "",
                 "2. 抖音保证金接口监听：",
-                f"powershell -ExecutionPolicy Bypass -File .\\debug_douyin_deposit_api.ps1 --shop-id douyin_default --shop-name {shop.name} --start {start} --end {end}",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_douyin_deposit_api.ps1 --shop-id douyin_default --shop-name {shop.name} --sheet-name {shop.sheet_name} --start {start} --end {end}",
+                "",
+                "3. 抖音切店接口监听：",
+                "powershell -ExecutionPolicy Bypass -File .\\debug_douyin_shop_switch_api.ps1 --profile-id douyin_default",
+                "",
+                "4. 抖音切店弹窗 DOM 调试：",
+                "powershell -ExecutionPolicy Bypass -File .\\debug_douyin_shop_switch_dom.ps1",
             ]
         else:
             commands = [
@@ -397,6 +403,21 @@ class ExporterApp(tk.Tk):
                 "",
                 "6. 退货接口失效时使用：打开监听窗口，手动完成筛选、查询、批量导出、确认生成和下载，完成后把生成的 JSON 发给开发者：",
                 f"powershell -ExecutionPolicy Bypass -File .\\debug_returns_api.ps1 --shop-id {shop.id} --start {start} --end {end}",
+                "",
+                "7. 延迟发货查询接口失效时使用：监听前三个 TAB 查询接口请求与响应：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_delayed_shipping_query_api.ps1 --shop-id {shop.id} --start {start} --end {end}",
+                "",
+                "8. 延迟发货导出接口失效时使用：监听生成报表、导出列表和下载接口：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_delayed_shipping_export_api.ps1 --shop-id {shop.id} --start {start} --end {end}",
+                "",
+                "9. 退货日期控件调试：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_returns_date_picker.ps1 --shop-id {shop.id} --start {start} --end {end}",
+                "",
+                "10. 延迟发货日期控件调试：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_delayed_shipping_date_picker.ps1 --shop-id {shop.id} --start {start} --end {end}",
+                "",
+                "11. 负向体验日期控件调试：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_negative_experience_date_picker.ps1 --shop-id {shop.id} --start {start} --end {end}",
             ]
         for line in commands:
             if line:
@@ -455,9 +476,11 @@ class ShopEditorDialog(tk.Toplevel):
         self.resizable(False, False)
         self.transient(parent)
         self.grab_set()
+        self.platform_var = tk.StringVar(value="pinduoduo")
         self.shop_id_var = tk.StringVar()
         self.shop_name_var = tk.StringVar()
         self.sheet_name_var = tk.StringVar()
+        self.profile_id_var = tk.StringVar(value="")
         self._build()
         self.after(50, self.lift)
         self.after(60, self.focus_force)
@@ -466,27 +489,69 @@ class ShopEditorDialog(tk.Toplevel):
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(frame, text="店铺 ID").grid(row=0, column=0, sticky=tk.W, padx=(0, 8), pady=6)
-        ttk.Entry(frame, textvariable=self.shop_id_var, width=42).grid(row=0, column=1, sticky=tk.EW, pady=6)
-        ttk.Label(frame, text="英文/数字/下划线，例如 dayan_new").grid(row=1, column=1, sticky=tk.W, pady=(0, 8))
+        ttk.Label(frame, text="平台").grid(row=0, column=0, sticky=tk.W, padx=(0, 8), pady=6)
+        platform_combo = ttk.Combobox(
+            frame,
+            textvariable=self.platform_var,
+            values=["pinduoduo | 拼多多", "douyin | 抖音"],
+            width=39,
+            state="readonly",
+        )
+        platform_combo.grid(row=0, column=1, sticky=tk.EW, pady=6)
+        platform_combo.current(0)
+        platform_combo.bind("<<ComboboxSelected>>", lambda _event: self._platform_changed())
 
-        ttk.Label(frame, text="店铺完整名称").grid(row=2, column=0, sticky=tk.W, padx=(0, 8), pady=6)
-        ttk.Entry(frame, textvariable=self.shop_name_var, width=42).grid(row=2, column=1, sticky=tk.EW, pady=6)
-        ttk.Label(frame, text="例如 拼多多大雁图书专营店").grid(row=3, column=1, sticky=tk.W, pady=(0, 8))
+        ttk.Label(frame, text="店铺 ID").grid(row=1, column=0, sticky=tk.W, padx=(0, 8), pady=6)
+        ttk.Entry(frame, textvariable=self.shop_id_var, width=42).grid(row=1, column=1, sticky=tk.EW, pady=6)
+        self.shop_id_hint = ttk.Label(frame, text="英文/数字/下划线，例如 dayan_new")
+        self.shop_id_hint.grid(row=2, column=1, sticky=tk.W, pady=(0, 8))
 
-        ttk.Label(frame, text="店铺短名").grid(row=4, column=0, sticky=tk.W, padx=(0, 8), pady=6)
-        ttk.Entry(frame, textvariable=self.sheet_name_var, width=42).grid(row=4, column=1, sticky=tk.EW, pady=6)
-        ttk.Label(frame, text="用于文件名和负向体验 sheet，例如 拼多多大雁").grid(row=5, column=1, sticky=tk.W, pady=(0, 8))
+        ttk.Label(frame, text="店铺完整名称").grid(row=3, column=0, sticky=tk.W, padx=(0, 8), pady=6)
+        ttk.Entry(frame, textvariable=self.shop_name_var, width=42).grid(row=3, column=1, sticky=tk.EW, pady=6)
+        self.shop_name_hint = ttk.Label(frame, text="例如 拼多多大雁图书专营店")
+        self.shop_name_hint.grid(row=4, column=1, sticky=tk.W, pady=(0, 8))
+
+        ttk.Label(frame, text="店铺短名").grid(row=5, column=0, sticky=tk.W, padx=(0, 8), pady=6)
+        ttk.Entry(frame, textvariable=self.sheet_name_var, width=42).grid(row=5, column=1, sticky=tk.EW, pady=6)
+        self.sheet_name_hint = ttk.Label(frame, text="用于文件名和负向体验 sheet，例如 拼多多大雁")
+        self.sheet_name_hint.grid(row=6, column=1, sticky=tk.W, pady=(0, 8))
+
+        ttk.Label(frame, text="登录状态 ID").grid(row=7, column=0, sticky=tk.W, padx=(0, 8), pady=6)
+        self.profile_entry = ttk.Entry(frame, textvariable=self.profile_id_var, width=42)
+        self.profile_entry.grid(row=7, column=1, sticky=tk.EW, pady=6)
+        self.profile_hint = ttk.Label(frame, text="拼多多无需填写；抖音默认 douyin_default，多店铺共用登录状态。")
+        self.profile_hint.grid(row=8, column=1, sticky=tk.W, pady=(0, 8))
 
         actions = ttk.Frame(frame)
-        actions.grid(row=6, column=0, columnspan=2, sticky=tk.E, pady=(12, 0))
+        actions.grid(row=9, column=0, columnspan=2, sticky=tk.E, pady=(12, 0))
         ttk.Button(actions, text="取消", command=self.destroy).pack(side=tk.LEFT, padx=8)
         ttk.Button(actions, text="保存", command=self._save).pack(side=tk.LEFT)
+        self._platform_changed()
+
+    def _platform_changed(self) -> None:
+        platform = self._selected_platform()
+        if platform == "douyin":
+            if not self.profile_id_var.get().strip():
+                self.profile_id_var.set("douyin_default")
+            self.shop_id_hint.configure(text="建议英文/数字/下划线，例如 douyin_new_shop")
+            self.shop_name_hint.configure(text="例如 字在图书精选店")
+            self.sheet_name_hint.configure(text="用于文件名，例如 抖音字在图书；会共用 douyin_default 登录状态")
+            self.profile_entry.configure(state=tk.NORMAL)
+        else:
+            self.profile_id_var.set("")
+            self.shop_id_hint.configure(text="英文/数字/下划线，例如 dayan_new")
+            self.shop_name_hint.configure(text="例如 拼多多大雁图书专营店")
+            self.sheet_name_hint.configure(text="用于文件名和负向体验 sheet，例如 拼多多大雁")
+            self.profile_entry.configure(state=tk.DISABLED)
+
+    def _selected_platform(self) -> str:
+        return self.platform_var.get().split("|", 1)[0].strip() or "pinduoduo"
 
     def _save(self) -> None:
         shop_id = self.shop_id_var.get().strip()
         shop_name = self.shop_name_var.get().strip()
         sheet_name = self.sheet_name_var.get().strip()
+        platform = self._selected_platform()
         if not shop_id or not shop_name or not sheet_name:
             messagebox.showerror("参数错误", "三个字段都填写后才能保存。", parent=self)
             return
@@ -499,7 +564,16 @@ class ShopEditorDialog(tk.Toplevel):
             shops = data.setdefault("shops", [])
             if any(item.get("id") == shop_id for item in shops):
                 raise ValueError(f"店铺 ID 已存在：{shop_id}")
-            shops.append({"id": shop_id, "name": shop_name, "sheet_name": sheet_name})
+            item = {"id": shop_id, "name": shop_name, "sheet_name": sheet_name}
+            if platform == "douyin":
+                item.update(
+                    {
+                        "platform": "douyin",
+                        "platform_name": "抖音",
+                        "profile_id": self.profile_id_var.get().strip() or "douyin_default",
+                    }
+                )
+            shops.append(item)
             shops_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         except Exception as exc:
             messagebox.showerror("添加失败", str(exc), parent=self)
@@ -534,7 +608,10 @@ class ShopDeleteDialog(tk.Toplevel):
             ttk.Button(frame, text="关闭", command=self.destroy).pack(anchor=tk.E)
             return
 
-        values = [f"{item.get('id')} | {item.get('name')}" for item in self.shops]
+        values = [
+            f"{item.get('id')} | {item.get('platform_name', '拼多多')} | {item.get('name')}"
+            for item in self.shops
+        ]
         ttk.Label(frame, text="选择要删除的店铺配置").grid(row=0, column=0, sticky=tk.W, pady=(0, 8))
         combo = ttk.Combobox(frame, textvariable=self.shop_var, values=values, width=56, state="readonly")
         combo.grid(row=1, column=0, sticky=tk.EW, pady=6)
@@ -553,7 +630,8 @@ class ShopDeleteDialog(tk.Toplevel):
             messagebox.showerror("参数错误", "请选择要删除的店铺。", parent=self)
             return
         shop_id = selected.split("|", 1)[0].strip()
-        shop_name = selected.split("|", 1)[1].strip() if "|" in selected else shop_id
+        parts = [part.strip() for part in selected.split("|")]
+        shop_name = parts[-1] if len(parts) >= 2 else shop_id
         if not messagebox.askyesno("确认删除", f"确定从配置中删除：{shop_name}？", parent=self):
             return
         shops_path = self.project_root / "config" / "shops.json"

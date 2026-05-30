@@ -15,7 +15,7 @@ from exporter.automation.returns import ReturnsAutomator
 from exporter.browser import PDD_HOME_URL, find_edge
 from exporter.config import Shop
 from exporter.dates import DateRange
-from exporter.paths import browser_profile_dir, task_shop_dir
+from exporter.paths import browser_profile_dir, export_filename, task_screenshot_dir, task_shop_dir
 from exporter.workbooks import (
     DELAYED_TAB_ORDER,
     merge_delayed_shipping_files,
@@ -109,7 +109,7 @@ class DelayedShippingAutomator:
         output_dir = task_shop_dir(self.project_root, date_range, "延迟发货数据", shop)
         raw_dir = output_dir / "延迟发货_平台原始文件"
         raw_dir.mkdir(parents=True, exist_ok=True)
-        screenshot_dir = output_dir / "截图"
+        screenshot_dir = task_screenshot_dir(self.project_root, date_range, "延迟发货数据", shop)
         screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         with sync_playwright() as playwright:
@@ -336,12 +336,18 @@ class DelayedShippingAutomator:
         if tab == "虚假发货/虚假轨迹":
             candidates = ["虚假发货/虚假轨迹", "虚假发货", "虚假轨迹"]
         for text in candidates:
-            try:
-                page.get_by_text(text, exact=True).first.click(timeout=5000)
-                page.wait_for_timeout(800)
-                return
-            except TimeoutError:
-                continue
+            for attempt in range(2):
+                try:
+                    self._common._dismiss_page_popups(page)
+                    page.get_by_text(text, exact=True).first.click(timeout=5000)
+                    page.wait_for_timeout(800)
+                    return
+                except TimeoutError:
+                    if attempt == 0:
+                        self._common._dismiss_page_popups(page)
+                        page.wait_for_timeout(500)
+                        continue
+                    break
         raise TimeoutError(f"未能打开 TAB：{tab}")
 
     def _set_compensation_time(self, page: Page, date_range: DateRange, *, manual_date: bool = False) -> None:
@@ -1159,7 +1165,7 @@ class DelayedShippingAutomator:
         return raw_dir / f"{stem}_{datetime.now():%Y%m%d_%H%M%S}{suffix}"
 
     def _output_path(self, output_dir: Path, shop: Shop, date_range: DateRange) -> Path:
-        return output_dir / f"{date_range.range_key}{shop.sheet_name}延迟发货.xlsx"
+        return output_dir / export_filename(shop, date_range, "延迟发货", ".xlsx")
 
     def _summary_message(
         self,

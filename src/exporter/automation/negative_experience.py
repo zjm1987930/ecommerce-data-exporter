@@ -16,7 +16,7 @@ from exporter.automation.returns import ReturnsAutomator
 from exporter.browser import find_edge, PDD_NEGATIVE_EXPERIENCE_URL
 from exporter.config import Shop
 from exporter.dates import DateRange, split_range
-from exporter.paths import browser_profile_dir, data_type_dir, task_shop_dir
+from exporter.paths import browser_profile_dir, data_type_dir, task_screenshot_dir
 from exporter.workbooks import NegativeExperienceRecord, write_negative_experience_workbook
 
 
@@ -115,7 +115,7 @@ class NegativeExperienceAutomator:
         edge_path = find_edge()
         user_data_dir = browser_profile_dir(self.project_root, self.platform, shop)
         user_data_dir.mkdir(parents=True, exist_ok=True)
-        screenshot_dir = task_shop_dir(self.project_root, chunks[0], "消费者负向体验扣款数据", shop) / "截图"
+        screenshot_dir = task_screenshot_dir(self.project_root, chunks[0], "消费者负向体验扣款数据", shop)
         screenshot_dir.mkdir(parents=True, exist_ok=True)
 
         with sync_playwright() as playwright:
@@ -125,8 +125,15 @@ class NegativeExperienceAutomator:
                 print(f"打开店铺浏览器环境：{shop.name}")
                 page.goto(PDD_NEGATIVE_EXPERIENCE_URL, wait_until="domcontentloaded")
                 self._common._dismiss_page_popups(page)
+                if "/aftersales/customer_complain_appeal" not in page.url:
+                    print("检测到弹窗处理后页面偏离负向体验入口，重新进入目标页面。")
+                    page.goto(PDD_NEGATIVE_EXPERIENCE_URL, wait_until="domcontentloaded")
                 self._wait_for_negative_page(page)
                 self._common._dismiss_page_popups(page)
+                if "/aftersales/customer_complain_appeal" not in page.url:
+                    print("检测到页面偏离负向体验入口，重新进入目标页面。")
+                    page.goto(PDD_NEGATIVE_EXPERIENCE_URL, wait_until="domcontentloaded")
+                    self._wait_for_negative_page(page)
 
                 all_records: list[NegativeExperienceRecord] = []
                 seen: set[tuple[str, ...]] = set()
@@ -1468,7 +1475,7 @@ class NegativeExperienceAutomator:
         )
 
     def _output_path(self, date_range: DateRange) -> Path:
-        filename = f"{date_range.range_key}拼多多负向体验.xlsx"
+        filename = f"{date_range.range_key}{self.platform_name}负向体验.xlsx"
         return data_type_dir(self.project_root, date_range, "消费者负向体验扣款数据") / filename
 
     _NEXT_PAGE_JS = """() => {

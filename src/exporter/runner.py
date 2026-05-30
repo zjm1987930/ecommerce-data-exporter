@@ -17,7 +17,7 @@ from .browser import open_shop_browser, PDD_DATA_TYPE_URLS, PDD_HOME_URL
 from .config import AppConfig, Shop, DataType
 from .dates import DateRange
 from .logging import ExportLogger, ExportLogRow
-from .paths import ensure_output_dirs, log_dir, shop_dir
+from .paths import ensure_output_dirs, export_filename, log_dir, shop_dir
 
 
 @dataclass(frozen=True)
@@ -202,8 +202,10 @@ class ExportRunner:
                 shops,
                 selection.date_range,
                 dry_run=selection.dry_run,
+                should_stop=lambda: bool(selection.stop_event and selection.stop_event.is_set()),
             )
         writer.flush()
+        self._raise_if_cancelled(selection)
 
         for shop in shops:
             self._raise_if_cancelled(selection)
@@ -232,6 +234,7 @@ class ExportRunner:
             if file_path:
                 self._status(status_callback, f"{shop.name} - 输出文件: {file_path}")
             if self._is_failed_status(status):
+                self._status(status_callback, f"{shop.name} - {data_type.name}: {reason}")
                 failures.append(f"{shop.name} - {data_type.name}: {reason}")
         return failures
 
@@ -366,7 +369,9 @@ class ExportRunner:
                     shop,
                     selection.date_range,
                     dry_run=selection.dry_run,
+                    should_stop=lambda: bool(selection.stop_event and selection.stop_event.is_set()),
                 )
+            self._raise_if_cancelled(selection)
             status = result.status
             reason = result.message
             if result.downloaded_file:
@@ -627,10 +632,10 @@ class ExportRunner:
         return next((data_type for data_type in data_types if data_type.id == data_type_id), None)
 
     def _delayed_shipping_name(self, shop: Shop, date_range: DateRange) -> str:
-        return f"{date_range.range_key}{shop.sheet_name}延迟发货.xlsx"
+        return export_filename(shop, date_range, "延迟发货", ".xlsx")
 
     def _customer_service_performance_name(self, shop: Shop, date_range: DateRange) -> str:
-        return f"{date_range.range_key}{shop.sheet_name}客服绩效.xls"
+        return export_filename(shop, date_range, "客服绩效", ".xls")
 
     def _shops_to_open(self, selection: RunSelection) -> set[Shop]:
         if not selection.open_browser:

@@ -3,7 +3,10 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 from datetime import date, datetime, time as datetime_time, timedelta, timezone
+import json
 from pathlib import Path
+import shutil
+from typing import Callable
 from urllib.parse import urlencode
 
 from playwright.sync_api import BrowserContext, Page, TimeoutError, sync_playwright
@@ -11,7 +14,7 @@ from playwright.sync_api import BrowserContext, Page, TimeoutError, sync_playwri
 from exporter.browser import find_edge
 from exporter.config import Shop
 from exporter.dates import DateRange
-from exporter.paths import browser_profile_dir, task_shop_dir
+from exporter.paths import browser_profile_dir, export_filename, task_screenshot_dir, task_shop_dir
 
 
 DOUYIN_HOME_URL = "https://fxg.jinritemai.com/ffa/mshop/homepage/index"
@@ -30,6 +33,9 @@ class DouyinDepositAutomator:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root
         self.platform = "douyin"
+        self._should_stop: Callable[[], bool] | None = None
+        self._unexpected_page_count = 0
+        self._fatal_error = ""
 
     def run(
         self,
@@ -38,8 +44,9 @@ class DouyinDepositAutomator:
         *,
         dry_run: bool = False,
         headed: bool = True,
+        should_stop: Callable[[], bool] | None = None,
     ) -> DouyinDepositResult:
-        return self.run_batch([shop], date_range, dry_run=dry_run, headed=headed)[shop]
+        return self.run_batch([shop], date_range, dry_run=dry_run, headed=headed, should_stop=should_stop)[shop]
 
     def run_batch(
         self,
@@ -48,10 +55,15 @@ class DouyinDepositAutomator:
         *,
         dry_run: bool = False,
         headed: bool = True,
+        should_stop: Callable[[], bool] | None = None,
     ) -> dict[Shop, DouyinDepositResult]:
         if not shops:
             return {}
 
+        previous_should_stop = self._should_stop
+        self._should_stop = should_stop
+        self._unexpected_page_count = 0
+        self._fatal_error = ""
         edge_path = find_edge()
         profile_id = shops[0].profile_id or DOUYIN_PROFILE_ID
         profile_shop = Shop(
@@ -63,51 +75,61 @@ class DouyinDepositAutomator:
         )
         user_data_dir = browser_profile_dir(self.project_root, self.platform, profile_shop)
         user_data_dir.mkdir(parents=True, exist_ok=True)
+        self._clear_session_restore(user_data_dir)
         results: dict[Shop, DouyinDepositResult] = {}
 
-        with sync_playwright() as playwright:
-            context = self._launch_context(playwright, edge_path, user_data_dir, headed=headed)
-            page = self._first_page(context)
-            try:
-                print(f"打开抖音共享登录环境：{user_data_dir}")
-                page.goto(DOUYIN_HOME_URL, wait_until="domcontentloaded", timeout=60000)
-                self._dismiss_page_popups(page)
-                self._ensure_logged_in(page)
-                for shop in shops:
-                    output_dir = task_shop_dir(self.project_root, date_range, "保证金数据", shop)
-                    output_dir.mkdir(parents=True, exist_ok=True)
-                    screenshot_dir = output_dir / "截图"
-                    screenshot_dir.mkdir(parents=True, exist_ok=True)
-                    try:
-                        self._switch_shop(page, shop)
-                        self._dismiss_page_popups(page)
-                        self._open_deposit_page(page)
-                        self._dismiss_page_popups(page)
-                        total = self._query_total(page, date_range)
-                        print(f"{shop.name} 保证金查询结果数量：{total}")
-                        if total == 0:
-                            print(f"{shop.name} 保证金数据无数据，跳过下载，继续下一家。")
-                            results[shop] = DouyinDepositResult("无数据", "保证金交易流水查询结果为 0")
-                            continue
-                        if dry_run:
-                            results[shop] = DouyinDepositResult("试运行成功", f"查询到 {total} 条，未下载 CSV")
-                            continue
-                        downloaded = self._download_csv(page, output_dir, shop, date_range)
-                        results[shop] = DouyinDepositResult("成功", f"已下载保证金数据：{downloaded}", downloaded)
-                    except Exception as exc:
-                        screenshot = screenshot_dir / f"抖音保证金自动化失败_{datetime.now():%Y%m%d_%H%M%S}.png"
-                        try:
-                            page.screenshot(path=str(screenshot), full_page=True)
-                            print(f"已保存失败截图：{screenshot}")
-                        except Exception:
-                            pass
-                        results[shop] = DouyinDepositResult("失败", str(exc))
-            finally:
+        try:
+            with sync_playwright() as playwright:
+                self._raise_if_stopped()
+                context = self._launch_context(playwright, edge_path, user_data_dir, headed=headed)
+                page = self._first_page(context)
+                context.on("page", lambda popup: self._close_unexpected_page(popup))
                 try:
-                    context.close()
-                except Exception:
-                    pass
-        return results
+                    print(f"打开抖音共享登录环境：{user_data_dir}")
+                    page.goto(DOUYIN_HOME_URL, wait_until="domcontentloaded", timeout=60000)
+                    self._dismiss_page_popups(page)
+                    self._ensure_logged_in(page)
+                    for shop in shops:
+                        self._raise_if_stopped()
+                        output_dir = task_shop_dir(self.project_root, date_range, "保证金数据", shop)
+                        output_dir.mkdir(parents=True, exist_ok=True)
+                        screenshot_dir = task_screenshot_dir(self.project_root, date_range, "保证金数据", shop)
+                        screenshot_dir.mkdir(parents=True, exist_ok=True)
+                        try:
+                            self._switch_shop(page, shop)
+                            page = self._single_page(context, preferred=page)
+                            self._dismiss_page_popups(page)
+                            self._raise_if_stopped()
+                            self._ensure_no_permission_error(page, shop)
+                            total = self._query_total(page, date_range)
+                            print(f"{shop.name} 保证金查询结果数量：{total}")
+                            if total == 0:
+                                print(f"{shop.name} 保证金数据无数据，跳过下载，继续下一家。")
+                                results[shop] = DouyinDepositResult("无数据", "保证金交易流水查询结果为 0")
+                                continue
+                            if dry_run:
+                                results[shop] = DouyinDepositResult("试运行成功", f"查询到 {total} 条，未下载 CSV")
+                                continue
+                            self._raise_if_stopped()
+                            downloaded = self._download_csv(page, output_dir, shop, date_range)
+                            print(f"{shop.name} 保证金数据已保存：{downloaded}")
+                            results[shop] = DouyinDepositResult("成功", f"已下载保证金数据：{downloaded}", downloaded)
+                        except Exception as exc:
+                            screenshot = screenshot_dir / f"抖音保证金自动化失败_{datetime.now():%Y%m%d_%H%M%S}.png"
+                            try:
+                                page.screenshot(path=str(screenshot), full_page=True)
+                                print(f"已保存失败截图：{screenshot}")
+                            except Exception:
+                                pass
+                            results[shop] = DouyinDepositResult("失败", str(exc))
+                finally:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+            return results
+        finally:
+            self._should_stop = previous_should_stop
 
     def _launch_context(self, playwright, edge_path: str, user_data_dir: Path, *, headed: bool) -> BrowserContext:
         try:
@@ -120,6 +142,7 @@ class DouyinDepositAutomator:
                 viewport={"width": 1440, "height": 900},
                 args=[
                     "--disable-background-mode",
+                    "--disable-session-crashed-bubble",
                     "--edge-skip-compat-layer-relaunch",
                     "--no-first-run",
                     "--profile-directory=Default",
@@ -131,13 +154,73 @@ class DouyinDepositAutomator:
             raise
 
     def _first_page(self, context: BrowserContext) -> Page:
-        for page in context.pages:
-            if not page.is_closed():
-                return page
-        return context.new_page()
+        return self._single_page(context)
+
+    def _single_page(self, context: BrowserContext, preferred: Page | None = None) -> Page:
+        pages = [page for page in context.pages if not page.is_closed()]
+        if not pages:
+            return context.new_page()
+
+        if preferred and not preferred.is_closed():
+            page = preferred
+        else:
+            page = next((item for item in pages if "fxg.jinritemai.com" in item.url), pages[0])
+        for extra_page in pages:
+            if extra_page == page:
+                continue
+            try:
+                extra_page.close(run_before_unload=False)
+            except Exception:
+                pass
+        try:
+            page.bring_to_front()
+        except Exception:
+            pass
+        return page
+
+    def _close_unexpected_page(self, popup: Page) -> None:
+        self._unexpected_page_count += 1
+        try:
+            popup.wait_for_load_state("domcontentloaded", timeout=1500)
+        except Exception:
+            pass
+        try:
+            print(f"检测到抖音自动化打开了额外页面，已关闭：{popup.url}")
+            popup.close(run_before_unload=False)
+        except Exception:
+            pass
+        if self._unexpected_page_count >= 3:
+            self._fatal_error = "抖音后台连续打开额外页面，已停止任务以避免窗口继续增加。"
+
+    def _clear_session_restore(self, user_data_dir: Path) -> None:
+        default_dir = user_data_dir / "Default"
+        sessions_dir = default_dir / "Sessions"
+        if sessions_dir.exists():
+            try:
+                shutil.rmtree(sessions_dir)
+            except Exception:
+                pass
+
+        preferences_path = default_dir / "Preferences"
+        if not preferences_path.exists():
+            return
+        try:
+            preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+            profile = preferences.setdefault("profile", {})
+            profile["exit_type"] = "Normal"
+            profile["exited_cleanly"] = True
+            session = preferences.setdefault("session", {})
+            session["restore_on_startup"] = 5
+            preferences_path.write_text(
+                json.dumps(preferences, ensure_ascii=False, separators=(",", ":")),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
 
     def _ensure_logged_in(self, page: Page) -> None:
         for _ in range(40):
+            self._raise_if_stopped()
             body = self._body_text(page)
             if self._is_login_page(page, body):
                 raise RuntimeError("抖音登录状态失效。请先运行 login_douyin.ps1 登录 douyin_default 后重跑。")
@@ -151,9 +234,15 @@ class DouyinDepositAutomator:
         return "/login" in page.url or "登录抖店" in text or "扫码登录" in text or "验证码" in text
 
     def _switch_shop(self, page: Page, shop: Shop) -> None:
+        self._raise_if_stopped()
         if self._current_shop_is(page, shop.name):
             print(f"当前已是目标店铺：{shop.name}")
             return
+        if "请选择店铺" in self._body_text(page):
+            self._close_shop_switcher(page)
+            if self._current_shop_is(page, shop.name):
+                print(f"当前已是目标店铺：{shop.name}")
+                return
         print(f"切换抖音店铺：{shop.name}")
         self._dismiss_page_popups(page)
         self._open_account_menu(page)
@@ -161,6 +250,7 @@ class DouyinDepositAutomator:
         self._reset_shop_switcher_scroll(page)
         self._click_shop_in_switcher(page, shop.name)
         for _ in range(50):
+            self._raise_if_stopped()
             page.wait_for_timeout(500)
             if self._current_shop_is(page, shop.name):
                 print(f"已切换到店铺：{shop.name}")
@@ -168,13 +258,109 @@ class DouyinDepositAutomator:
         raise TimeoutError(f"切换店铺后未能确认当前店铺为：{shop.name}")
 
     def _current_shop_is(self, page: Page, shop_name: str) -> bool:
+        if self._shop_name_visible_as_current(page, shop_name):
+            return True
+        current_shop = self._current_shop_name(page)
+        if current_shop:
+            return current_shop == shop_name
         text = self._body_text(page)
         return shop_name in text and "请选择店铺" not in text
 
+    def _shop_name_visible_as_current(self, page: Page, shop_name: str) -> bool:
+        try:
+            return bool(
+                page.evaluate(
+                    """(shopName) => {
+                        const visible = (el) => {
+                            const style = window.getComputedStyle(el);
+                            const rect = el.getBoundingClientRect();
+                            return style.visibility !== "hidden"
+                                && style.display !== "none"
+                                && rect.width > 0
+                                && rect.height > 0
+                                && rect.right >= 0
+                                && rect.bottom >= 0;
+                        };
+                        const inSwitcher = (el) => {
+                            let node = el;
+                            while (node && node !== document.body) {
+                                const rect = node.getBoundingClientRect();
+                                const text = node.innerText || "";
+                                if (
+                                    text.includes("请选择店铺")
+                                    && rect.left > window.innerWidth * 0.2
+                                    && rect.right < window.innerWidth * 0.8
+                                    && rect.top > 80
+                                ) return true;
+                                node = node.parentElement;
+                            }
+                            return false;
+                        };
+                        return Array.from(document.querySelectorAll("div,span,[role='button']"))
+                            .filter(visible)
+                            .some((el) => {
+                                const text = (el.innerText || el.textContent || "").trim();
+                                if (text !== shopName || inSwitcher(el)) return false;
+                                const rect = el.getBoundingClientRect();
+                                return rect.top < 180 || rect.left > window.innerWidth * 0.65;
+                            });
+                    }""",
+                    shop_name,
+                )
+            )
+        except Exception:
+            return False
+
+    def _current_shop_name(self, page: Page) -> str:
+        try:
+            return page.evaluate(
+                """() => {
+                    const parseStore = (key) => {
+                        const raw = window.localStorage.getItem(key);
+                        if (!raw) return "";
+                        try {
+                            const data = JSON.parse(raw);
+                            return data?.data?.shop_name || data?.user?.shop_name || data?.shop_name || "";
+                        } catch (error) {
+                            return "";
+                        }
+                    };
+                    return parseStore("storeGetters") || parseStore("initialUserInfo");
+                }"""
+            ) or ""
+        except Exception:
+            return ""
+
+    def _close_shop_switcher(self, page: Page) -> None:
+        try:
+            page.evaluate(
+                """() => {
+                    const visible = (el) => {
+                        const style = window.getComputedStyle(el);
+                        const rect = el.getBoundingClientRect();
+                        return style.visibility !== "hidden"
+                            && style.display !== "none"
+                            && rect.width > 0
+                            && rect.height > 0;
+                    };
+                    const closeNodes = Array.from(document.querySelectorAll("button,span,div,[role='button']"))
+                        .filter(visible)
+                        .filter((el) => (el.innerText || el.textContent || "").trim() === "×");
+                    const node = closeNodes[closeNodes.length - 1];
+                    if (node) node.click();
+                }"""
+            )
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+        except Exception:
+            pass
+
     def _open_account_menu(self, page: Page) -> None:
+        self._raise_if_stopped()
         if self._has_visible_text(page, "切换组织/店铺"):
             return
-        for _ in range(2):
+        for _ in range(90):
+            self._raise_if_stopped()
             point = page.evaluate(
                 """() => {
                     const visible = (el) => {
@@ -187,33 +373,41 @@ class DouyinDepositAutomator:
                             && rect.right >= 0
                             && rect.bottom >= 0;
                     };
+                    const isSafeAccountText = (text) => {
+                        const value = text.replace(/\\s+/g, "");
+                        if (value.length < 2 || value.length > 80) return false;
+                        if (!/店|图书|文化|书/.test(value)) return false;
+                        if (/立即|报名|学习|新建|设置|查看|去领取|去获得|继续|反馈|客服|热线|平台|排行/.test(value)) return false;
+                        return true;
+                    };
                     const candidates = Array.from(document.querySelectorAll("div,span,button,[role='button']"))
                         .filter(visible)
                         .map((el) => ({ el, text: (el.innerText || el.textContent || "").trim(), rect: el.getBoundingClientRect() }))
-                        .filter((item) => item.rect.top < 90 && item.rect.left > window.innerWidth * 0.65 && /店|图书|文化/.test(item.text))
+                        .filter((item) =>
+                            item.rect.top < 90
+                            && item.rect.left > window.innerWidth * 0.45
+                            && item.rect.width >= 32
+                            && item.rect.height >= 18
+                            && isSafeAccountText(item.text)
+                        )
                         .sort((a, b) => b.rect.right - a.rect.right);
-                    if (!candidates.length) return { x: window.innerWidth - 80, y: 30 };
+                    if (!candidates.length) return null;
                     const rect = candidates[0].rect;
                     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
                 }"""
             )
+            if not point:
+                page.wait_for_timeout(500)
+                continue
             page.mouse.click(point["x"], point["y"])
             page.wait_for_timeout(600)
             if self._has_visible_text(page, "切换组织/店铺"):
                 return
-        for offset in (70, 115, 165, 215):
-            point = page.evaluate(
-                """(offset) => ({ x: window.innerWidth - offset, y: 32 })""",
-                offset,
-            )
-            page.mouse.click(point["x"], point["y"])
-            page.wait_for_timeout(600)
-            if self._has_visible_text(page, "切换组织/店铺"):
-                return
-        print("未能通过文本确认账号菜单，但将继续尝试点击“切换组织/店铺”。")
+        raise RuntimeError("等待 45 秒后仍未找到抖音右上角店铺/账号菜单，请确认页面右上角店铺名已加载。")
 
     def _click_switch_shop_entry(self, page: Page) -> None:
         for _ in range(3):
+            self._raise_if_stopped()
             try:
                 page.get_by_text("切换组织/店铺", exact=False).last.click(timeout=1000)
                 for _inner in range(10):
@@ -265,6 +459,7 @@ class DouyinDepositAutomator:
 
     def _click_shop_in_switcher(self, page: Page, shop_name: str) -> None:
         for _ in range(3):
+            self._raise_if_stopped()
             result = page.evaluate(
                 """(shopName) => {
                     const visible = (el) => {
@@ -378,6 +573,9 @@ class DouyinDepositAutomator:
         page.goto(DOUYIN_DEPOSIT_URL, wait_until="domcontentloaded", timeout=60000)
         for _ in range(40):
             self._dismiss_page_popups(page)
+            if "/ffa/content/shop_deposit" not in page.url:
+                print("检测到页面偏离抖音保证金入口，重新进入目标页面。")
+                page.goto(DOUYIN_DEPOSIT_URL, wait_until="domcontentloaded", timeout=60000)
             body = self._body_text(page)
             if "交易流水" in body and "体验保证金" in body and "导出明细" in body:
                 return
@@ -385,6 +583,7 @@ class DouyinDepositAutomator:
         raise TimeoutError("未能进入抖音体验保证金页面")
 
     def _query_total(self, page: Page, date_range: DateRange) -> int:
+        self._ensure_no_permission_error(page)
         params = self._base_params()
         params.update(
             {
@@ -405,6 +604,9 @@ class DouyinDepositAutomator:
                 raise RuntimeError(f"抖音保证金查询接口缺少 total：{data}")
             return int(total)
         except Exception as exc:
+            if self._is_permission_text(str(exc)):
+                raise
+            self._ensure_no_permission_error(page)
             page_total = self._page_total(page)
             if page_total is not None:
                 print(f"接口查询异常，已使用页面总数兜底：{page_total}；原始错误：{exc}")
@@ -423,7 +625,7 @@ class DouyinDepositAutomator:
             }
         )
         url = "/governance/shop/tpledgecash/record/download?" + urlencode(params)
-        target = self._unique_download_path(output_dir, f"{date_range.range_key}{shop.sheet_name}保证金.csv")
+        target = self._unique_download_path(output_dir, export_filename(shop, date_range, "保证金", ".csv"))
         result = page.evaluate(
             """async (url) => {
                 const response = await fetch(url, { credentials: "include" });
@@ -469,11 +671,52 @@ class DouyinDepositAutomator:
             url,
         )
         if not result.get("ok"):
-            raise RuntimeError(f"{label}接口请求失败：HTTP {result.get('status')} {result.get('text', '')[:300]}")
+            text = result.get("text", "")[:300]
+            if self._is_permission_text(text):
+                raise RuntimeError(f"{label}无权限：HTTP {result.get('status')} {text}")
+            raise RuntimeError(f"{label}接口请求失败：HTTP {result.get('status')} {text}")
         data = result.get("data") or {}
         if int(data.get("code", -1)) != 0 or int(data.get("st", -1)) != 0:
+            message = self._response_message(data)
+            if self._is_permission_text(message):
+                raise RuntimeError(f"{label}无权限：{message}")
             raise RuntimeError(f"{label}接口返回失败：{data}")
         return data
+
+    def _ensure_no_permission_error(self, page: Page, shop: Shop | None = None) -> None:
+        text = self._body_text(page)
+        if not self._is_permission_text(text):
+            return
+        prefix = f"{shop.name} " if shop else ""
+        raise RuntimeError(f"{prefix}无权限：当前账号/岗位没有访问抖音保证金页面或接口的权限")
+
+    def _is_permission_text(self, text: str) -> bool:
+        return any(
+            item in text
+            for item in (
+                "没有访问该页面的权限",
+                "无访问权限",
+                "没有权限",
+                "无权限",
+                "岗位没有访问",
+                "权限不足",
+                "not authorized",
+                "permission",
+            )
+        )
+
+    def _response_message(self, data: dict) -> str:
+        for key in ("msg", "message", "err_msg", "errMsg", "error_msg", "toast"):
+            value = data.get(key)
+            if value:
+                return str(value)
+        inner = data.get("data")
+        if isinstance(inner, dict):
+            for key in ("msg", "message", "err_msg", "errMsg", "error_msg", "toast"):
+                value = inner.get(key)
+                if value:
+                    return str(value)
+        return str(data)
 
     def _base_params(self) -> dict:
         return {
@@ -488,56 +731,17 @@ class DouyinDepositAutomator:
         return int(datetime.combine(day, value, tzinfo=china).timestamp())
 
     def _dismiss_page_popups(self, page: Page) -> None:
-        for _ in range(4):
-            target = page.evaluate(
-                """() => {
-                    const protectedTexts = ["请选择店铺", "切换组织/店铺", "交易流水"];
-                    const visible = (el) => {
-                        const style = window.getComputedStyle(el);
-                        const rect = el.getBoundingClientRect();
-                        return style.visibility !== "hidden"
-                            && style.display !== "none"
-                            && rect.width > 0
-                            && rect.height > 0
-                            && rect.right >= 0
-                            && rect.bottom >= 0
-                            && rect.left <= window.innerWidth
-                            && rect.top <= window.innerHeight;
-                    };
-                    const protectedAncestor = (el) => {
-                        let node = el;
-                        while (node && node !== document.body) {
-                            const text = (node.innerText || "").slice(0, 500);
-                            if (protectedTexts.some((item) => text.includes(item))) return true;
-                            node = node.parentElement;
-                        }
-                        return false;
-                    };
-                    const candidates = Array.from(document.querySelectorAll("button,a,i,span,div,[role='button']"))
-                        .filter((el) => visible(el) && !protectedAncestor(el))
-                        .map((el) => {
-                            const rect = el.getBoundingClientRect();
-                            const text = (el.innerText || el.textContent || "").trim();
-                            const label = (el.getAttribute("aria-label") || el.getAttribute("title") || "").trim();
-                            const className = String(el.className || "");
-                            let score = 0;
-                            if (/^(×|x|X|关闭|取消)$/.test(text)) score += 8;
-                            if (/关闭|close/i.test(label)) score += 8;
-                            if (/close|modal-close|dialog-close/i.test(className)) score += 6;
-                            if (rect.width <= 90 && rect.height <= 90) score += 3;
-                            return { el, score, rect };
-                        })
-                        .filter((item) => item.score >= 8)
-                        .sort((a, b) => b.score - a.score);
-                    if (!candidates.length) return null;
-                    const rect = candidates[0].rect;
-                    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-                }"""
-            )
-            if not target:
-                return
-            page.mouse.click(target["x"], target["y"])
-            page.wait_for_timeout(400)
+        try:
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(200)
+        except Exception:
+            pass
+
+    def _raise_if_stopped(self) -> None:
+        if self._fatal_error:
+            raise RuntimeError(self._fatal_error)
+        if self._should_stop and self._should_stop():
+            raise RuntimeError("用户已终止任务。")
 
     def _body_text(self, page: Page) -> str:
         try:

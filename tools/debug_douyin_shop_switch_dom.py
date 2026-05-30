@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import sys
@@ -16,8 +17,11 @@ from exporter.paths import browser_profile_dir
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="抓取抖音切店弹窗 DOM 和本地存储中的店铺主体缓存")
+    parser.add_argument("--profile-id", default=DOUYIN_PROFILE_ID)
+    args = parser.parse_args()
     profile_shop = Shop(
-        id=DOUYIN_PROFILE_ID,
+        id=args.profile_id,
         name="抖音默认账号",
         sheet_name="抖音默认账号",
         platform="douyin",
@@ -77,6 +81,7 @@ def main() -> None:
             }"""
         )
         out = ROOT / "原始数据" / "导出日志" / "抖音切店接口监听" / "抖音切店DOM.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         print(out)
         preview = json.dumps(data["cards"][:80], ensure_ascii=False, indent=2)[:12000]

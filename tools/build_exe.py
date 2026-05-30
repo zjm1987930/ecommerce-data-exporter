@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 
-APP_NAME = "拼多多数据自动导出工具"
+APP_NAME = "电商平台原始数据自动导出工具"
 
 
 def remove_path(path: Path) -> None:
@@ -58,10 +58,10 @@ def main() -> None:
     (app_dist / "原始数据").mkdir(exist_ok=True)
     (app_dist / "browser_profiles").mkdir(exist_ok=True)
 
-    readme = """拼多多数据自动导出工具
+    readme = """电商平台原始数据自动导出工具
 
 使用方式：
-1. 双击“拼多多数据自动导出工具.exe”启动。
+1. 双击“电商平台原始数据自动导出工具.exe”启动。
 2. 首次使用或登录失效时，在 GUI 中点击“补登录选中店铺”。
 3. 导出的文件会保存到本目录下的“原始数据”。
 4. 店铺配置在本目录下的“config\\shops.json”，修改后重启软件生效。
@@ -69,6 +69,7 @@ def main() -> None:
 注意：
 - 本软件不需要目标电脑安装 Python 或 Python 依赖。
 - 目标电脑需要 Windows 系统自带或已安装 Microsoft Edge。
+- 当前已支持拼多多和抖音；抖音多店铺共用同一个登录状态，并在后台自动切换店铺。
 - 请把整个文件夹一起复制到其他电脑，不要只复制 EXE。
 """
     (app_dist / "使用说明.txt").write_text(readme, encoding="utf-8")

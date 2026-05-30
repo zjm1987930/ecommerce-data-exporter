@@ -1,17 +1,23 @@
 # 电商平台原始数据自动导出工具
 
-本项目用于从拼多多商家后台批量导出原始数据，并按固定目录和命名规则归档，供既有报表工具继续处理。
+本项目用于从电商平台商家后台批量导出原始数据，并按固定目录和命名规则归档，供既有报表工具继续处理。
 
 工具只负责“导出原始数据”和“记录运行结果”，不负责报表汇总、绩效计算或业务分析。
 
 ## 当前范围
 
-当前 GUI 主流程已接入拼多多以下数据类型：
+当前 GUI 主流程已接入以下平台和数据类型。
+
+拼多多：
 
 - 退货数据
 - 消费者负向体验扣款数据
 - 延迟发货数据
 - 客服绩效数据
+
+抖音：
+
+- 保证金数据
 
 日常导出建议统一从 GUI 执行：
 
@@ -43,6 +49,12 @@
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\login_shop.ps1 --shop-id dayan_tushu
+```
+
+抖音补登录共享账号：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\login_douyin.ps1 --profile-id douyin_default --profile-name 抖音默认账号
 ```
 
 批量补登录：
