@@ -150,6 +150,30 @@
       "platform": "douyin",
       "platform_name": "抖音",
       "profile_id": "douyin_default"
+    },
+    {
+      "id": "kuaishou_yiguan_tushu_qijiandian",
+      "name": "逸观图书旗舰店",
+      "sheet_name": "快手逸观图书旗舰店",
+      "platform": "kuaishou",
+      "platform_name": "快手",
+      "profile_id": "kuaishou_default"
+    },
+    {
+      "id": "kuaishou_dayan_tushu",
+      "name": "大雁图书",
+      "sheet_name": "快手大雁图书",
+      "platform": "kuaishou",
+      "platform_name": "快手",
+      "profile_id": "kuaishou_default"
+    },
+    {
+      "id": "kuaishou_jinzhe_tushu",
+      "name": "金喆图书",
+      "sheet_name": "快手金喆图书",
+      "platform": "kuaishou",
+      "platform_name": "快手",
+      "profile_id": "kuaishou_default"
     }
   ]
 }

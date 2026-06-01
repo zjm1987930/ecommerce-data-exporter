@@ -19,6 +19,10 @@
 
 - 保证金数据
 
+快手：
+
+- 保证金数据：已接入接口导出，3 家店共用 `kuaishou_default` 登录状态，支持多店铺连续切换；当前按快手平台月账单导出。
+
 日常导出建议统一从 GUI 执行：
 
 ```powershell
@@ -57,6 +61,12 @@ powershell -ExecutionPolicy Bypass -File .\login_shop.ps1 --shop-id dayan_tushu
 powershell -ExecutionPolicy Bypass -File .\login_douyin.ps1 --profile-id douyin_default --profile-name 抖音默认账号
 ```
 
+快手补登录账号：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\login_kuaishou.ps1 --profile-id kuaishou_default --profile-name 快手默认账号
+```
+
 批量补登录：
 
 ```powershell
@@ -75,4 +85,4 @@ powershell -ExecutionPolicy Bypass -File .\run_returns_once.ps1 --shop-id dayan_
 powershell -ExecutionPolicy Bypass -File .\run_customer_service_performance_once.ps1 --shop-id dayan_tushu --start 2026-04-01 --end 2026-04-30 --dry-run
 ```
 
-接口失效或页面变化时，可用 GUI 工具箱里的“生成调试命令”生成当前店铺和日期范围对应的监听命令。
+接口失效或页面变化时，可用 GUI 工具箱里的“生成调试命令”生成当前店铺和日期范围对应的监听命令。快手保证金规则采集也使用该入口。

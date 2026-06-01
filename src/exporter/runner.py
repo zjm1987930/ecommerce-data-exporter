@@ -11,6 +11,7 @@ from typing import Callable
 from .automation.customer_service_performance import CustomerServicePerformanceAutomator
 from .automation.delayed_shipping import DELAYED_TAB_ORDER, DelayedShippingAutomator
 from .automation.douyin_deposit import DouyinDepositAutomator
+from .automation.kuaishou_deposit import KuaishouDepositAutomator
 from .automation.negative_experience import NegativeExperienceAutomator
 from .automation.returns import ReturnsAutomator
 from .browser import open_shop_browser, PDD_DATA_TYPE_URLS, PDD_HOME_URL
@@ -57,6 +58,7 @@ class ExportRunner:
                 "delayed_shipping",
                 "customer_service_performance",
                 "douyin_deposit",
+                "kuaishou_deposit",
             }
             for data_type in selection.data_types
         )
@@ -95,6 +97,11 @@ class ExportRunner:
             if self._data_type_by_id(selection.data_types, "douyin_deposit")
             else None
         )
+        kuaishou_deposit_automator = (
+            KuaishouDepositAutomator(self.project_root)
+            if self._data_type_by_id(selection.data_types, "kuaishou_deposit")
+            else None
+        )
 
         douyin_deposit_type = self._data_type_by_id(selection.data_types, "douyin_deposit")
         if (
@@ -106,6 +113,27 @@ class ExportRunner:
                 douyin_deposit_automator,
                 logger,
                 douyin_deposit_type,
+                selection,
+                status_callback,
+            )
+            if failures:
+                self._status(status_callback, "全部选中任务已执行完成，但存在失败项，需要补跑：")
+                for item in failures:
+                    self._status(status_callback, item)
+            else:
+                self._status(status_callback, "全部选中任务已执行完成，没有失败项。")
+            return logger.write()
+
+        kuaishou_deposit_type = self._data_type_by_id(selection.data_types, "kuaishou_deposit")
+        if (
+            kuaishou_deposit_automator
+            and kuaishou_deposit_type
+            and all(data_type.id == "kuaishou_deposit" for data_type in selection.data_types)
+        ):
+            failures = self._run_kuaishou_deposit_batch(
+                kuaishou_deposit_automator,
+                logger,
+                kuaishou_deposit_type,
                 selection,
                 status_callback,
             )
@@ -167,6 +195,16 @@ class ExportRunner:
                         selection,
                         status_callback,
                     )
+                elif data_type.id == "kuaishou_deposit":
+                    assert kuaishou_deposit_automator is not None
+                    status, reason = self._run_kuaishou_deposit_shop(
+                        kuaishou_deposit_automator,
+                        logger,
+                        shop,
+                        data_type,
+                        selection,
+                        status_callback,
+                    )
                 else:
                     self._log_skeleton_task(logger, shop, data_type, selection, status_callback)
                     status, reason = "待接入", ""
@@ -203,6 +241,65 @@ class ExportRunner:
                 selection.date_range,
                 dry_run=selection.dry_run,
                 should_stop=lambda: bool(selection.stop_event and selection.stop_event.is_set()),
+            )
+        writer.flush()
+        self._raise_if_cancelled(selection)
+
+        for shop in shops:
+            self._raise_if_cancelled(selection)
+            result = results.get(shop, None)
+            status = result.status if result else "失败"
+            reason = result.message if result else "未取得执行结果"
+            file_path = str(result.downloaded_file) if result and result.downloaded_file else ""
+            logger.add(
+                ExportLogRow(
+                    month=selection.date_range.month_key,
+                    platform=shop.platform_name,
+                    shop=shop.name,
+                    data_type=data_type.name,
+                    start_date=selection.date_range.start.isoformat(),
+                    end_date=selection.date_range.end.isoformat(),
+                    status=status,
+                    file_path=file_path,
+                    reason=reason,
+                    started_at=started_at_map.get(shop, datetime.now().isoformat(timespec="seconds")),
+                    finished_at=datetime.now().isoformat(timespec="seconds"),
+                )
+            )
+            self._status(status_callback, f"{shop.name} - {data_type.name}: {status}")
+            if status == "无数据":
+                self._status(status_callback, f"{shop.name} - {data_type.name}: 无数据，已跳过下载，继续下一家")
+            if file_path:
+                self._status(status_callback, f"{shop.name} - 输出文件: {file_path}")
+            if self._is_failed_status(status):
+                self._status(status_callback, f"{shop.name} - {data_type.name}: {reason}")
+                failures.append(f"{shop.name} - {data_type.name}: {reason}")
+        return failures
+
+    def _run_kuaishou_deposit_batch(
+        self,
+        automator: KuaishouDepositAutomator,
+        logger: ExportLogger,
+        data_type: DataType,
+        selection: RunSelection,
+        status_callback,
+    ) -> list[str]:
+        shops = [shop for shop in selection.shops if shop.platform == data_type.platform]
+        failures: list[str] = []
+        started_at_map = {shop: datetime.now().isoformat(timespec="seconds") for shop in shops}
+        self._status(status_callback, "快手保证金当前按平台月账单导出；选择月内任意日期范围时，平台返回该月份整月账单。")
+        for shop in shops:
+            self._raise_if_cancelled(selection)
+            self._status(status_callback, f"{shop.name} - {data_type.name}: 等待快手共享浏览器批量执行")
+
+        writer = _StatusWriter(status_callback)
+        with redirect_stdout(writer), redirect_stderr(writer):
+            results = automator.run_batch(
+                shops,
+                selection.date_range,
+                dry_run=selection.dry_run,
+                should_stop=lambda: bool(selection.stop_event and selection.stop_event.is_set()),
+                user_action_callback=selection.user_action_callback,
             )
         writer.flush()
         self._raise_if_cancelled(selection)
@@ -370,6 +467,63 @@ class ExportRunner:
                     selection.date_range,
                     dry_run=selection.dry_run,
                     should_stop=lambda: bool(selection.stop_event and selection.stop_event.is_set()),
+                )
+            self._raise_if_cancelled(selection)
+            status = result.status
+            reason = result.message
+            if result.downloaded_file:
+                file_path = str(result.downloaded_file)
+            self._status(status_callback, f"{shop.name} - {data_type.name}: {status}")
+            if file_path:
+                self._status(status_callback, f"{shop.name} - 输出文件: {file_path}")
+        except TaskCancelled:
+            raise
+        except Exception as exc:
+            reason = str(exc)
+            self._status(status_callback, f"{shop.name} - {data_type.name}: 失败")
+            self._status(status_callback, reason)
+        finally:
+            logger.add(
+                ExportLogRow(
+                    month=selection.date_range.month_key,
+                    platform=shop.platform_name,
+                    shop=shop.name,
+                    data_type=data_type.name,
+                    start_date=selection.date_range.start.isoformat(),
+                    end_date=selection.date_range.end.isoformat(),
+                    status=status,
+                    file_path=file_path,
+                    reason=reason,
+                    started_at=started_at,
+                    finished_at=datetime.now().isoformat(timespec="seconds"),
+                )
+            )
+        return status, reason
+
+    def _run_kuaishou_deposit_shop(
+        self,
+        automator: KuaishouDepositAutomator,
+        logger: ExportLogger,
+        shop: Shop,
+        data_type: DataType,
+        selection: RunSelection,
+        status_callback,
+    ) -> tuple[str, str]:
+        started_at = datetime.now().isoformat(timespec="seconds")
+        status = "失败"
+        file_path = ""
+        reason = ""
+        self._status(status_callback, f"{shop.name} - {data_type.name}: 开始下载快手保证金")
+        self._status(status_callback, "快手保证金当前按平台月账单导出；选择月内任意日期范围时，平台返回该月份整月账单。")
+        try:
+            writer = _StatusWriter(status_callback)
+            with redirect_stdout(writer), redirect_stderr(writer):
+                result = automator.run(
+                    shop,
+                    selection.date_range,
+                    dry_run=selection.dry_run,
+                    should_stop=lambda: bool(selection.stop_event and selection.stop_event.is_set()),
+                    user_action_callback=selection.user_action_callback,
                 )
             self._raise_if_cancelled(selection)
             status = result.status

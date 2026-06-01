@@ -13,6 +13,7 @@ PDD_NEGATIVE_EXPERIENCE_URL = "https://mms.pinduoduo.com/aftersales/customer_com
 PDD_CUSTOMER_SERVICE_URL = "https://mms.pinduoduo.com/mms-chat/overview/service"
 PDD_CUSTOMER_SERVICE_PERFORMANCE_URL = "https://mms.pinduoduo.com/mms-chat/overview/merchant"
 DOUYIN_HOME_URL = "https://fxg.jinritemai.com/ffa/mshop/homepage/index"
+KUAISHOU_HOME_URL = "https://s.kwaixiaodian.com/"
 PDD_DATA_TYPE_URLS = {
     "returns": PDD_HOME_URL,
     "negative_experience": PDD_NEGATIVE_EXPERIENCE_URL,

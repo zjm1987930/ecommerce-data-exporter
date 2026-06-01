@@ -407,3 +407,24 @@
 - 公共弹窗关闭规则补充“居中大面板右上角小尺寸关闭按钮”识别：仅当候选元素位于居中弹窗右上角附近、尺寸接近关闭按钮、不是链接时才点击，避免回到之前误点营销跳转按钮的问题。
 - 延迟发货切 TAB 增加二次重试：第一次点击 TAB 超时时，会再执行一次公共弹窗关闭并重试点击，处理弹窗刚好在切 TAB 前后出现的情况。
 - 已用模拟“申诉复议”居中弹窗验证公共规则可以关闭右上角 `×`，并通过 Python 语法检查和项目自检。
+
+## 2026-06-01 快手保证金接入准备
+
+- 新增快手平台登录脚本 `login_kuaishou.ps1` / `tools/open_kuaishou_login.py`，默认登录状态目录为 `browser_profiles/kuaishou/kuaishou_default/`。
+- 新增快手保证金接口监听脚本 `debug_kuaishou_deposit_api.ps1` / `tools/debug_kuaishou_deposit_api.py`，用于采集快手保证金查询、导出、下载接口和样本文件。
+- GUI 添加店铺配置支持选择 `kuaishou | 快手`，快手店铺会写入 `platform=kuaishou`、`platform_name=快手`、`profile_id=kuaishou_default`。
+- GUI 补登录选中店铺支持快手 profile，工具箱“生成调试命令”支持生成快手保证金监听命令。
+- 监听文件 `快手保证金接口监听_20260601_131439.json` 确认快手资金账单导出链路：创建导出任务 `/rest/app/tts/business/api/funds/wallet/create/export/task` 会返回 `downloadUrl`，下载域名为 `www.kuaishoupay.com`，样本文件为 `202605资金账单.csv`。
+- 新增 `src/exporter/automation/kuaishou_deposit.py` 并接入 GUI runner。快手保证金与抖音一样复用共享浏览器 profile 批量跑选中店铺；切店方式按页面 DOM 处理，仍需 3 家快手店铺实跑验证。
+- `config/tasks.json` 已启用 `kuaishou_deposit` 数据类型。
+- 已新增 3 家快手店铺配置，共用 `profile_id=kuaishou_default`：逸观图书旗舰店、大雁图书、金喆图书。
+- 实测发现快手 DOM 切店不可靠：当前已停留在目标店铺时仍可能误判并尝试切店，且切店入口定位会卡住。已新增 `debug_kuaishou_shop_switch_api.ps1` / `tools/debug_kuaishou_shop_switch_api.py`，下一步通过监听手动切店接口改为接口切店。
+- 监听文件 `快手切店接口监听_20260601_133850.json` 确认快手切店走子账号多账号登录：`/pass/kshop/login/multiAccountChangeList` 返回 3 家店铺、当前店铺和 `kshop.api.mt` token；`/rest/app/tts/staff/needCheckSms` 返回需要短信校验。
+- 快手保证金切店逻辑已改为接口判断当前店铺：如果 `multiAccountChangeList` 显示当前店铺就是目标店铺，直接跳过切店；如果需要短信校验，则打开子账号切换页并通过 GUI 暂停等待用户手动切换，完成后再继续导出。
+- 逸观图书旗舰店单店已成功下载快手保证金 CSV；大雁图书单店导出接口返回成功但 `downloadUrl` 为空，经复核月账单实际有数据，已撤回“空 downloadUrl=无数据”的判断，并恢复监听成功样本中的完整 `exportConfig` 字段。
+- 大雁修复后已正常导出；金喆图书连续切店后仍出现空 `downloadUrl`，进一步调整为使用 `multiAccountChangeList` 当前店铺记录里的 `userId` 作为 `operatorName`，避免 `stable/info` 在人工验证或连续切店后滞后。
+- 多店铺连续执行时确认根因是 Edge 下载完成气泡抢占焦点；最终方案改为使用 Playwright 后台 HTTP 请求拉取 `downloadUrl` 并直接写入 CSV，不再通过 Edge 页面触发浏览器下载。
+- 已移除为规避下载气泡临时加入的页面聚焦、按 `Esc`、点击页面空白区、每店强制回首页、临时下载页等动作，保留后台 HTTP 下载作为最终方案。
+- 2026-04 多店铺测试中金喆图书创建导出任务返回 `result=1` 但 `downloadUrl` 为空；身份字段已确认正确，先增加空下载地址的短等待重试，避免连续多店铺导出时平台生成地址延迟导致误失败。
+- 确认当前快手保证金下载为平台“月账单”，`downloadUrl` 中 `bill_date` / `bill_end_date` 为 `YYYYMM`；GUI 运行状态增加提示：选择月内任意日期范围时，平台返回该月份整月账单。
+- 本次没有修改拼多多、抖音既有 automator 的导出逻辑。

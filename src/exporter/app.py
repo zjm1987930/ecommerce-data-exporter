@@ -11,7 +11,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from .browser import DOUYIN_HOME_URL, PDD_HOME_URL, open_shop_browser
+from .browser import DOUYIN_HOME_URL, KUAISHOU_HOME_URL, PDD_HOME_URL, open_shop_browser
 from .config import AppConfig, load_config, Shop, DataType
 from .dates import previous_month, parse_date, DateRange
 from .runner import ExportRunner, RunSelection, TaskCancelled
@@ -143,6 +143,13 @@ class ExporterApp(tk.Tk):
         seen[self.config.platform] = self.config.platform_name
         for shop in self.config.shops:
             seen.setdefault(shop.platform, shop.platform_name)
+        for data_type in self.config.data_types:
+            if data_type.platform == "douyin":
+                seen.setdefault(data_type.platform, "抖音")
+            elif data_type.platform == "kuaishou":
+                seen.setdefault(data_type.platform, "快手")
+            else:
+                seen.setdefault(data_type.platform, data_type.platform)
         return list(seen.items())
 
     def _current_platform(self) -> str:
@@ -275,6 +282,20 @@ class ExporterApp(tk.Tk):
                     platform_name=shop.platform_name,
                 )
                 targets.append(("抖音默认账号", shop.platform, profile_shop, DOUYIN_HOME_URL))
+            elif shop.platform == "kuaishou":
+                profile_id = shop.profile_id or "kuaishou_default"
+                key = (shop.platform, profile_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                profile_shop = Shop(
+                    id=profile_id,
+                    name=shop.name,
+                    sheet_name=shop.sheet_name,
+                    platform=shop.platform,
+                    platform_name=shop.platform_name,
+                )
+                targets.append((shop.name, shop.platform, profile_shop, KUAISHOU_HOME_URL))
             else:
                 key = (shop.platform, shop.id)
                 if key in seen:
@@ -381,6 +402,20 @@ class ExporterApp(tk.Tk):
                 "",
                 "4. 抖音切店弹窗 DOM 调试：",
                 "powershell -ExecutionPolicy Bypass -File .\\debug_douyin_shop_switch_dom.ps1",
+            ]
+        elif shop.platform == "kuaishou":
+            profile_id = shop.profile_id or "kuaishou_default"
+            commands = [
+                "可复制到 PowerShell 执行。以下命令默认使用当前选中的第一个店铺和当前日期范围：",
+                "",
+                "1. 补登录快手账号：",
+                f"powershell -ExecutionPolicy Bypass -File .\\login_kuaishou.ps1 --profile-id {profile_id} --profile-name {shop.name}",
+                "",
+                "2. 快手保证金接口监听：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_kuaishou_deposit_api.ps1 --shop-id {shop.id} --shop-name {shop.name} --sheet-name {shop.sheet_name} --profile-id {profile_id} --start {start} --end {end}",
+                "",
+                "3. 快手切店接口监听：",
+                f"powershell -ExecutionPolicy Bypass -File .\\debug_kuaishou_shop_switch_api.ps1 --profile-id {profile_id}",
             ]
         else:
             commands = [
@@ -493,7 +528,7 @@ class ShopEditorDialog(tk.Toplevel):
         platform_combo = ttk.Combobox(
             frame,
             textvariable=self.platform_var,
-            values=["pinduoduo | 拼多多", "douyin | 抖音"],
+            values=["pinduoduo | 拼多多", "douyin | 抖音", "kuaishou | 快手"],
             width=39,
             state="readonly",
         )
@@ -530,18 +565,25 @@ class ShopEditorDialog(tk.Toplevel):
 
     def _platform_changed(self) -> None:
         platform = self._selected_platform()
-        if platform == "douyin":
+        if platform in {"douyin", "kuaishou"}:
             if not self.profile_id_var.get().strip():
-                self.profile_id_var.set("douyin_default")
+                self.profile_id_var.set("douyin_default" if platform == "douyin" else "kuaishou_default")
             self.shop_id_hint.configure(text="建议英文/数字/下划线，例如 douyin_new_shop")
-            self.shop_name_hint.configure(text="例如 字在图书精选店")
-            self.sheet_name_hint.configure(text="用于文件名，例如 抖音字在图书；会共用 douyin_default 登录状态")
+            if platform == "douyin":
+                self.shop_name_hint.configure(text="例如 字在图书精选店")
+                self.sheet_name_hint.configure(text="用于文件名，例如 抖音字在图书；会共用 douyin_default 登录状态")
+                self.profile_hint.configure(text="拼多多无需填写；抖音默认 douyin_default，多店铺共用登录状态。")
+            else:
+                self.shop_name_hint.configure(text="例如 快手某某图书店")
+                self.sheet_name_hint.configure(text="用于文件名，例如 快手某某图书；默认共用 kuaishou_default 登录状态")
+                self.profile_hint.configure(text="拼多多无需填写；快手默认 kuaishou_default，可按账号拆分登录状态。")
             self.profile_entry.configure(state=tk.NORMAL)
         else:
             self.profile_id_var.set("")
             self.shop_id_hint.configure(text="英文/数字/下划线，例如 dayan_new")
             self.shop_name_hint.configure(text="例如 拼多多大雁图书专营店")
             self.sheet_name_hint.configure(text="用于文件名和负向体验 sheet，例如 拼多多大雁")
+            self.profile_hint.configure(text="拼多多无需填写；抖音默认 douyin_default，多店铺共用登录状态。")
             self.profile_entry.configure(state=tk.DISABLED)
 
     def _selected_platform(self) -> str:
@@ -571,6 +613,14 @@ class ShopEditorDialog(tk.Toplevel):
                         "platform": "douyin",
                         "platform_name": "抖音",
                         "profile_id": self.profile_id_var.get().strip() or "douyin_default",
+                    }
+                )
+            elif platform == "kuaishou":
+                item.update(
+                    {
+                        "platform": "kuaishou",
+                        "platform_name": "快手",
+                        "profile_id": self.profile_id_var.get().strip() or "kuaishou_default",
                     }
                 )
             shops.append(item)

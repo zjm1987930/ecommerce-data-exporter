@@ -550,10 +550,121 @@ https://mms.pinduoduo.com/mms-chat/overview/merchant
 后续平台应按同样结构补充规则：
 
 - 天猫
-- 快手
 - 京东
 
 每个平台单独维护导出入口、登录特点、店铺切换方式、下载文件特点和异常处理规则。
+
+## 快手规则
+
+### 店铺和登录规则
+
+快手平台已新增独立浏览器登录状态目录，默认使用：
+
+```text
+browser_profiles/kuaishou/kuaishou_default/
+```
+
+如果多个快手店铺共用同一个账号，店铺配置可共用 `profile_id=kuaishou_default`。如果快手店铺需要不同账号登录，应为每个账号配置独立 `profile_id`，例如 `kuaishou_account_1`。
+
+首次登录或登录失效时，先运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\login_kuaishou.ps1 --profile-id kuaishou_default --profile-name 快手默认账号
+```
+
+工具不得保存快手账号密码，也不得绕过扫码、短信、滑块等人工验证。遇到验证时由用户在普通 Edge 中手动完成。
+
+### 快手保证金数据规则
+
+当前状态：已根据 2026-06-01 监听文件接入接口导出；3 家快手店铺已实跑验证通过。切店先用快手多账号列表接口判断当前店铺，遇到短信/人工验证时暂停等待用户手动完成。
+
+后台入口：
+
+```text
+资金 -> 资金账单
+```
+
+页面 URL 参考：
+
+```text
+https://s.kwaixiaodian.com/zone/fund/accounting/account-bill
+https://s.kwaixiaodian.com/zone/fund/accounting/export-list?isNew=true&mode=ACCOUNT_TYPE_WALLET_PINGAN&subMchId=...
+```
+
+已新增接口监听脚本：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\debug_kuaishou_deposit_api.ps1 --shop-id kuaishou_default --shop-name 快手调试店铺 --profile-id kuaishou_default --start 2026-05-01 --end 2026-05-31
+```
+
+采集时需要人工在快手后台完成以下步骤：
+
+1. 进入保证金、资金或账户相关页面。
+2. 选择本次日期范围。
+3. 点击查询。
+4. 点击导出、下载明细或生成报表。
+5. 若出现生成报表列表或下载弹窗，继续操作到文件下载完成或页面提示完成。
+6. 回到 PowerShell 窗口按 Enter，保存 JSON、截图、HTML 和下载样本。
+
+待确认字段：
+
+| 项目 | 当前状态 |
+| --- | --- |
+| 后台入口 URL | 已监听确认：`/zone/fund/accounting/account-bill` |
+| 菜单路径 | 已确认大类为资金账单；完整菜单路径待补充 |
+| 店铺切换方式 | 已确认：单账号多店铺，通过子账号多账号登录切换；当前 3 家店共用 `kuaishou_default` |
+| 日期字段名称 | 当前按月账单导出；接口使用 `startTime` / `endTime` 毫秒时间戳，下载地址使用 `bill_date` / `bill_end_date=YYYYMM` |
+| 查询接口 | 已监听到统计接口 `/rest/app/tts/business/api/funds/wallet/query/account/bill/statistic` |
+| 导出/下载接口 | 创建任务使用 `/rest/app/tts/business/api/funds/wallet/create/export/task`；下载使用返回的 `downloadUrl` 后台 HTTP 保存 |
+| 导出文件格式 | 已确认 CSV，样本文件名为 `202605资金账单.csv`，文件内容为 GBK 编码 |
+| 无数据判断 | 待继续确认；创建导出任务返回成功但 `downloadUrl` 为空不能直接判无数据，需要优先核对导出参数和当前店铺 |
+| 无权限判断 | 待页面和接口响应确认 |
+
+接口参数：
+
+- `accountType=ACCOUNT_TYPE_WALLET_PINGAN`
+- `accountRole=ACCOUNT_ROLE_SELLER`
+- `taskKind=10000`
+- `bidBizType=seller_or_promoter`
+- `subMchId` 为当前快手店铺资金账户 ID，切店后必须重新提取，不得写死。
+- `operatorName` 使用 `multiAccountChangeList` 中当前目标店铺的 `userId`，不要优先使用可能在切店后滞后的 `stable/info`。
+- `exportConfig` 为 JSON 字符串，包含 `startTime`、`endTime`、`dateType=2`、`accountType`、`accountRole`、`operatorName`、`subMchId`，需与监听成功样本保持一致。
+
+切店接口规则：
+
+- 当前快手账号列表接口为 `/pass/kshop/login/multiAccountChangeList`，表单参数包含 `countryCode=+86`、`sid=kshop.api`。
+- 该接口返回 `userInfos`，其中 `current=true` 的记录为当前店铺；自动化必须先判断当前店铺，当前店铺已是目标店铺时不得再打开切店页。
+- 监听确认 3 家店铺的 `userId` 分别为：逸观图书旗舰店 `140000099615304`，大雁图书 `140000101601497`，金喆图书 `140000108132548`。
+- 切店前会调用 `/rest/app/tts/staff/needCheckSms`。如果平台返回需要短信验证，工具只打开 `/zone/sub-account/change` 并暂停等待用户手动切换，不得尝试绕过短信验证。
+- 人工切换完成后，工具再次读取 `multiAccountChangeList`，确认 `current=true` 的店铺等于目标店铺后再进入资金账单页。
+
+下载方式：
+
+- 创建导出任务接口成功后会直接返回 `downloadUrl`。
+- 如果接口返回 `result=1` 但 `downloadUrl` 为空，不能直接记为无数据；需先核对当前店铺、`operatorName`、`subMchId` 和 `exportConfig` 是否与平台前端一致。连续多店铺导出时可能出现创建任务成功但下载地址延迟返回，自动化会等待后重试创建导出任务，重试后仍为空才记失败。
+- `downloadUrl` 域名为 `www.kuaishoupay.com`，参数包含 `account_id`、`bill_date`、`bill_end_date`、`bill_token`、`merchant_id`、`sub_mch_id`、`tar_type=GZIP`、`user_role=USER_ROLE_SELLER`。
+- 当前导出不需要进入下载列表轮询。
+- 自动化下载时不再让 Edge 页面打开 `downloadUrl`，改用 Playwright 后台 HTTP 请求直接保存文件，避免 Edge 下载气泡抢占焦点影响多店铺连续切换。
+
+日期范围说明：
+
+- 当前快手保证金导出走平台“月账单”能力，下载地址中的 `bill_date` / `bill_end_date` 为 `YYYYMM`。
+- 因此用户选择某个月内任意一段日期时，平台实际返回该月份整月账单；建议按自然月选择日期范围。
+- 如果后续需要按日区间导出，需要重新监听“日账单/账务明细”导出链路后单独接入。
+
+CSV 表头：
+
+1. 账务流水号
+2. 关联业务单号
+3. 入账时间
+4. 收支类型
+5. 变动金额（元）
+6. 期末余额（元）
+7. 业务类型
+8. 描述
+9. 备注
+
+快手保证金必须使用独立 `kuaishou_deposit` automator，不得复用抖音保证金接口规则，也不得接到拼多多现有 automator 中。
 
 ## 抖音规则
 

@@ -35,6 +35,12 @@
       "name": "保证金数据",
       "platform": "douyin",
       "enabled": true
+    },
+    {
+      "id": "kuaishou_deposit",
+      "name": "保证金数据",
+      "platform": "kuaishou",
+      "enabled": true
     }
   ]
 }
