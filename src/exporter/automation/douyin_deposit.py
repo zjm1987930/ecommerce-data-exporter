@@ -36,6 +36,7 @@ class DouyinDepositAutomator:
         self._should_stop: Callable[[], bool] | None = None
         self._unexpected_page_count = 0
         self._fatal_error = ""
+        self._candidate_page: Page | None = None
 
     def run(
         self,
@@ -64,6 +65,7 @@ class DouyinDepositAutomator:
         self._should_stop = should_stop
         self._unexpected_page_count = 0
         self._fatal_error = ""
+        self._candidate_page = None
         edge_path = find_edge()
         profile_id = shops[0].profile_id or DOUYIN_PROFILE_ID
         profile_shop = Shop(
@@ -83,7 +85,7 @@ class DouyinDepositAutomator:
                 self._raise_if_stopped()
                 context = self._launch_context(playwright, edge_path, user_data_dir, headed=headed)
                 page = self._first_page(context)
-                context.on("page", lambda popup: self._close_unexpected_page(popup))
+                context.on("page", lambda popup: self._handle_new_page(popup))
                 try:
                     print(f"打开抖音共享登录环境：{user_data_dir}")
                     page.goto(DOUYIN_HOME_URL, wait_until="domcontentloaded", timeout=60000)
@@ -96,7 +98,7 @@ class DouyinDepositAutomator:
                         screenshot_dir = task_screenshot_dir(self.project_root, date_range, "保证金数据", shop)
                         screenshot_dir.mkdir(parents=True, exist_ok=True)
                         try:
-                            self._switch_shop(page, shop)
+                            page = self._switch_shop(context, page, shop)
                             page = self._single_page(context, preferred=page)
                             self._dismiss_page_popups(page)
                             self._raise_if_stopped()
@@ -157,6 +159,23 @@ class DouyinDepositAutomator:
         return self._single_page(context)
 
     def _single_page(self, context: BrowserContext, preferred: Page | None = None) -> Page:
+        candidate = self._candidate_page
+        self._candidate_page = None
+        if candidate and not candidate.is_closed():
+            for _ in range(15):
+                if candidate.url != "about:blank":
+                    break
+                candidate.wait_for_timeout(200)
+            if self._is_douyin_url(candidate.url):
+                preferred = candidate
+                self._unexpected_page_count = 0
+                print(f"已接管抖音新页面继续执行：{candidate.url}")
+            else:
+                try:
+                    candidate.close(run_before_unload=False)
+                except Exception:
+                    pass
+
         pages = [page for page in context.pages if not page.is_closed()]
         if not pages:
             return context.new_page()
@@ -178,19 +197,51 @@ class DouyinDepositAutomator:
             pass
         return page
 
-    def _close_unexpected_page(self, popup: Page) -> None:
-        self._unexpected_page_count += 1
+    def _handle_new_page(self, popup: Page) -> None:
+        opener = None
+        opener_url = ""
         try:
-            popup.wait_for_load_state("domcontentloaded", timeout=1500)
+            opener = popup.opener()
+            opener_url = opener.url if opener and not opener.is_closed() else ""
         except Exception:
             pass
+
+        for _ in range(8):
+            if popup.is_closed() or popup.url != "about:blank":
+                break
+            try:
+                popup.wait_for_timeout(200)
+            except Exception:
+                break
+
+        if not popup.is_closed() and popup.url == "about:blank":
+            try:
+                print("检测到抖音/Edge 内部临时空白页，已关闭且不计入异常。")
+                popup.close(run_before_unload=False)
+            except Exception:
+                pass
+            return
+
+        if not popup.is_closed() and (
+            self._is_douyin_url(popup.url)
+            or self._is_douyin_url(opener_url)
+        ):
+            self._candidate_page = popup
+            self._unexpected_page_count = 0
+            print(f"检测到抖音后台新页面，等待接管：{popup.url}")
+            return
+
+        self._unexpected_page_count += 1
         try:
-            print(f"检测到抖音自动化打开了额外页面，已关闭：{popup.url}")
+            print(f"检测到外部额外页面，已关闭：{popup.url}")
             popup.close(run_before_unload=False)
         except Exception:
             pass
         if self._unexpected_page_count >= 3:
-            self._fatal_error = "抖音后台连续打开额外页面，已停止任务以避免窗口继续增加。"
+            self._fatal_error = "抖音后台连续打开外部页面，已停止任务以避免窗口继续增加。"
+
+    def _is_douyin_url(self, url: str) -> bool:
+        return url.startswith("https://fxg.jinritemai.com/")
 
     def _clear_session_restore(self, user_data_dir: Path) -> None:
         default_dir = user_data_dir / "Default"
@@ -233,28 +284,29 @@ class DouyinDepositAutomator:
         text = body if body is not None else self._body_text(page)
         return "/login" in page.url or "登录抖店" in text or "扫码登录" in text or "验证码" in text
 
-    def _switch_shop(self, page: Page, shop: Shop) -> None:
+    def _switch_shop(self, context: BrowserContext, page: Page, shop: Shop) -> Page:
         self._raise_if_stopped()
         if self._current_shop_is(page, shop.name):
             print(f"当前已是目标店铺：{shop.name}")
-            return
+            return page
         if "请选择店铺" in self._body_text(page):
             self._close_shop_switcher(page)
             if self._current_shop_is(page, shop.name):
                 print(f"当前已是目标店铺：{shop.name}")
-                return
+                return page
         print(f"切换抖音店铺：{shop.name}")
         self._dismiss_page_popups(page)
-        self._open_account_menu(page)
-        self._click_switch_shop_entry(page)
+        page = self._open_account_menu(context, page)
+        page = self._click_switch_shop_entry(context, page)
         self._reset_shop_switcher_scroll(page)
-        self._click_shop_in_switcher(page, shop.name)
+        page = self._click_shop_in_switcher(context, page, shop.name)
         for _ in range(50):
             self._raise_if_stopped()
             page.wait_for_timeout(500)
+            page = self._single_page(context, preferred=page)
             if self._current_shop_is(page, shop.name):
                 print(f"已切换到店铺：{shop.name}")
-                return
+                return page
         raise TimeoutError(f"切换店铺后未能确认当前店铺为：{shop.name}")
 
     def _current_shop_is(self, page: Page, shop_name: str) -> bool:
@@ -355,10 +407,10 @@ class DouyinDepositAutomator:
         except Exception:
             pass
 
-    def _open_account_menu(self, page: Page) -> None:
+    def _open_account_menu(self, context: BrowserContext, page: Page) -> Page:
         self._raise_if_stopped()
         if self._has_visible_text(page, "切换组织/店铺"):
-            return
+            return page
         for _ in range(90):
             self._raise_if_stopped()
             point = page.evaluate(
@@ -401,19 +453,21 @@ class DouyinDepositAutomator:
                 continue
             page.mouse.click(point["x"], point["y"])
             page.wait_for_timeout(600)
+            page = self._single_page(context, preferred=page)
             if self._has_visible_text(page, "切换组织/店铺"):
-                return
+                return page
         raise RuntimeError("等待 45 秒后仍未找到抖音右上角店铺/账号菜单，请确认页面右上角店铺名已加载。")
 
-    def _click_switch_shop_entry(self, page: Page) -> None:
+    def _click_switch_shop_entry(self, context: BrowserContext, page: Page) -> Page:
         for _ in range(3):
             self._raise_if_stopped()
             try:
                 page.get_by_text("切换组织/店铺", exact=False).last.click(timeout=1000)
                 for _inner in range(10):
                     page.wait_for_timeout(300)
+                    page = self._single_page(context, preferred=page)
                     if self._has_visible_text(page, "请选择店铺"):
-                        return
+                        return page
             except TimeoutError:
                 pass
             point = page.evaluate(
@@ -453,11 +507,12 @@ class DouyinDepositAutomator:
             page.mouse.click(point["x"], point["y"])
             for _inner in range(10):
                 page.wait_for_timeout(300)
+                page = self._single_page(context, preferred=page)
                 if "请选择店铺" in self._body_text(page):
-                    return
+                    return page
         raise TimeoutError("点击“切换组织/店铺”后未出现店铺选择弹窗")
 
-    def _click_shop_in_switcher(self, page: Page, shop_name: str) -> None:
+    def _click_shop_in_switcher(self, context: BrowserContext, page: Page, shop_name: str) -> Page:
         for _ in range(3):
             self._raise_if_stopped()
             result = page.evaluate(
@@ -506,7 +561,8 @@ class DouyinDepositAutomator:
             if result.get("ok"):
                 page.wait_for_timeout(300)
                 page.mouse.click(result["x"], result["y"])
-                return
+                page.wait_for_timeout(700)
+                return self._single_page(context, preferred=page)
             self._reset_shop_switcher_scroll(page)
             page.wait_for_timeout(300)
         raise TimeoutError(f"店铺切换弹窗中未找到：{shop_name}")
