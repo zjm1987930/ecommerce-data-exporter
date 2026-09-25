@@ -182,6 +182,16 @@
       "platform": "douyin",
       "platform_name": "抖音",
       "profile_id": "douyin_default"
+    },
+    {
+      "id": "yiguan_muyingtushu",
+      "name": "拼多多逸观母婴图书专营店",
+      "sheet_name": "拼多多逸观母婴图书"
+    },
+    {
+      "id": "yiguan_muyingshuji",
+      "name": "拼多多逸观母婴书籍专营店",
+      "sheet_name": "拼多多逸观母婴书籍"
     }
   ]
 }
